@@ -36,7 +36,6 @@ jobs:
         --name "Glans_Miya" \
         --add-data "README.md;." \
         --exclude-module "tkinter" \
-        --exclude-module "unittest" \
         --exclude-module "pydoc" \
         --upx-dir "C:/ProgramData/chocolatey/bin" \
         "app.py"
