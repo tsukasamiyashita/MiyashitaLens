@@ -1,47 +1,44 @@
-name: Build Windows Executable
+name: Build EXE
 
 on:
   push:
-    branches: [ "main", "master" ]
-  pull_request:
-    branches: [ "main", "master" ]
-  workflow_dispatch:
+    branches: [ "main" ]
 
 jobs:
   build:
     runs-on: windows-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v4
 
+    # Python環境のセットアップ（安定した3.11を使用）
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
         python-version: '3.11'
-        cache: 'pip'
 
-    - name: Install Dependencies
+    # 必要なライブラリのインストール
+    - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         pip install pyinstaller
 
-    - name: Install UPX (for compression)
-      run: choco install upx
+    # PyInstallerでexe化の実行 (モジュール分割に対応)
+    - name: Build with PyInstaller
+      run: >
+        pyinstaller 
+        --onefile 
+        --noconsole 
+        --clean 
+        --name "Glans_Miya-v1.0.1" 
+        --add-data "README.md;."
+        app.py
 
-    - name: Build Lightweight Executable (Onefile)
-      shell: bash
-      run: |
-        pyinstaller --noconfirm --onefile --windowed --clean \
-        --name "Glans_Miya" \
-        --add-data "README.md;." \
-        --exclude-module "tkinter" \
-        --exclude-module "pydoc" \
-        --upx-dir "C:/ProgramData/chocolatey/bin" \
-        "app.py"
-
+    # 完成したexeファイルをGitHub上にアップロード
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
         name: Glans_Miya-v1.0.1
-        path: dist/Glans_Miya.exe
+        path: dist/Glans_Miya-v1.0.1.exe
