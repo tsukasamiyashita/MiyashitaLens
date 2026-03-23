@@ -30,6 +30,7 @@ jobs:
       run: choco install upx
 
     - name: Build Lightweight Executable (Onefile)
+      shell: bash
       run: |
         pyinstaller --noconfirm --onefile --windowed --clean \
         --name "Glans_Miya" \
