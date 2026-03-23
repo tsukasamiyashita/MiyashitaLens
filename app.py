@@ -1,34 +1,61 @@
 import sys
 import os
 import time
-import requests
-import urllib3
+import json
 import cv2
 import numpy as np
-import asyncio
 from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, 
-                             QPushButton, QTextEdit, QLabel, QMainWindow)
-from PyQt6.QtCore import Qt, QRect, QPoint, QTimer, QThread, pyqtSignal, QBuffer, QIODevice
-from PyQt6.QtGui import QPainter, QColor, QPen, QGuiApplication, QScreen, QPixmap, QIcon
+                             QPushButton, QTextEdit, QLabel, QMainWindow, QLineEdit, 
+                             QMessageBox, QComboBox, QCheckBox, QMenuBar, QMenu, QScrollArea)
+from PyQt6.QtCore import Qt, QRect, QPoint, QTimer, QThread, pyqtSignal, QBuffer, QIODevice, QSettings
+from PyQt6.QtGui import QPainter, QColor, QPen, QGuiApplication, QScreen, QPixmap, QIcon, QAction
 
-# WinRT API (Windows標準機能) へのアクセスモジュール
-from winsdk.windows.media.ocr import OcrEngine
-from winsdk.windows.globalization import Language
-from winsdk.windows.graphics.imaging import BitmapDecoder
-from winsdk.windows.storage.streams import DataWriter, InMemoryRandomAccessStream
+import google.generativeai as genai
 
-class MainWindow(QWidget):
+class HelpWindow(QWidget):
+    """
+    README.md の内容を表示するウィンドウ
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Glans_Miya - 使い方")
+        self.resize(500, 600)
+        self.setWindowFlags(Qt.WindowType.Window)
+        
+        layout = QVBoxLayout()
+        
+        self.text_browser = QTextEdit()
+        self.text_browser.setReadOnly(True)
+        
+        # README.md の読み込み
+        readme_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "README.md")
+        if os.path.exists(readme_path):
+            with open(readme_path, "r", encoding="utf-8") as f:
+                content = f.read()
+                self.text_browser.setPlainText(content)
+        else:
+            self.text_browser.setPlainText("README.md が見つかりませんでした。\nアプリのフォルダを確認してください。")
+            
+        layout.addWidget(self.text_browser)
+        
+        close_btn = QPushButton("閉じる")
+        close_btn.clicked.connect(self.close)
+        layout.addWidget(close_btn)
+        
+        self.setLayout(layout)
+
+class MainWindow(QMainWindow):
     """
     常に最前面に表示される、操作方法の案内とキャプチャ起動ボタンを持つメインウィンドウ
     """
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Glans_Miya")
-        # 常に手前に表示される小さなツールウィンドウとして設定
+        self.version = "v1.0.0"
+        self.setWindowTitle(f"Glans_Miya {self.version}")
         self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool)
-        self.resize(320, 220)
+        self.resize(360, 440)
         self.setStyleSheet("""
-            QWidget {
+            QMainWindow, QWidget {
                 background-color: #ffffff;
                 color: #333333;
                 font-family: 'Segoe UI', Meiryo, sans-serif;
@@ -37,7 +64,17 @@ class MainWindow(QWidget):
                 font-size: 13px;
                 line-height: 1.5;
             }
-            QPushButton {
+            QLineEdit, QComboBox {
+                padding: 8px;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                background-color: white;
+            }
+            QCheckBox {
+                font-size: 13px;
+                padding: 4px;
+            }
+            QPushButton#SnipBtn {
                 background-color: #1a73e8;
                 color: white;
                 border: none;
@@ -47,44 +84,301 @@ class MainWindow(QWidget):
                 font-weight: bold;
                 margin-top: 10px;
             }
-            QPushButton:hover {
+            QPushButton#SnipBtn:hover {
                 background-color: #1557b0;
+            }
+            QPushButton#SaveBtn, QPushButton#TestBtn, QPushButton#RecommendBtn, QPushButton#UpdateBtn {
+                background-color: #f1f3f4;
+                color: #333;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                padding: 8px 12px;
+                font-weight: bold;
+            }
+            QPushButton#SaveBtn:hover, QPushButton#TestBtn:hover, QPushButton#RecommendBtn:hover, QPushButton#UpdateBtn:hover {
+                background-color: #e8eaed;
+            }
+            /* モード選択ボタンのスタイル */
+            QPushButton.ModeBtn {
+                background-color: #f8f9fa;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+                padding: 10px;
+                font-size: 12px;
+                font-weight: bold;
+            }
+            QPushButton.ModeBtn:hover {
+                background-color: #e9ecef;
+            }
+            QPushButton.ModeBtn[selected="true"] {
+                background-color: #e8f0fe;
+                border: 2px solid #1a73e8;
+                color: #1a73e8;
+            }
+            QPushButton#TestBtn:disabled, QPushButton#UpdateBtn:disabled {
+                color: #999;
+                background-color: #f8f9fa;
             }
         """)
 
-        layout = QVBoxLayout()
+        # メニューバーの作成
+        self.create_menu_bar()
+
+        # 中央ウィジェットの設定
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        layout = QVBoxLayout(central_widget)
         layout.setContentsMargins(20, 20, 20, 20)
 
         # 操作方法の表示
         guide_label = QLabel(
-            "<b>【使い方】</b><br><br>"
-            "1. 下のボタンをクリックします<br>"
-            "2. 画面が暗くなったら、翻訳したい<br>"
-            "　文字や画像をドラッグして囲みます<br>"
-            "3. 翻訳結果のウィンドウが表示されます"
+            "<b>【使い方】</b><br>"
+            "1. モードを選択し、APIキーを設定します<br>"
+            "2. 下のボタンで画面を切り取ります<br>"
+            "3. 選択した機能で結果を表示します"
         )
         guide_label.setTextFormat(Qt.TextFormat.RichText)
         layout.addWidget(guide_label)
+        
+        layout.addSpacing(10)
+
+        # 設定ファイル (Cドライブのユーザー直下) の準備
+        app_data_dir = os.path.join(os.path.expanduser('~'), 'Glans_Miya')
+        os.makedirs(app_data_dir, exist_ok=True)
+        settings_path = os.path.join(app_data_dir, "settings.ini")
+        self.settings = QSettings(settings_path, QSettings.Format.IniFormat)
+
+        # --- モード選択エリア ---
+        mode_label = QLabel("✨ 機能を選択:")
+        layout.addWidget(mode_label)
+        
+        mode_btn_layout = QHBoxLayout()
+        self.btn_ja = QPushButton("日本語翻訳")
+        self.btn_en = QPushButton("英語翻訳")
+        self.btn_dict = QPushButton("辞書")
+        
+        for btn in [self.btn_ja, self.btn_en, self.btn_dict]:
+            btn.setProperty("class", "ModeBtn")
+            btn.setCheckable(True)
+            btn.clicked.connect(self.on_mode_changed)
+            mode_btn_layout.addWidget(btn)
+            
+        layout.addLayout(mode_btn_layout)
+        
+        # 保存されているモードを読み込む (デフォルト: 日本語翻訳)
+        self.current_mode = self.settings.value("last_mode", "ja_translate")
+        self.update_mode_ui()
+
+        layout.addSpacing(10)
+
+        # --- モデル選択エリア ---
+        model_label = QLabel("🤖 AIモデル:")
+        model_selector_layout = QHBoxLayout()
+        self.model_combo = QComboBox()
+        self.model_combo.addItems([
+            "gemini-3.1-flash-lite-preview",
+            "gemini-2.5-flash",
+            "gemini-2.5-pro",
+            "gemini-1.5-flash",
+            "gemini-1.5-pro"
+        ])
+        
+        self.update_models_btn = QPushButton("更新")
+        self.update_models_btn.setObjectName("UpdateBtn")
+        self.update_models_btn.clicked.connect(self.fetch_models_list)
+        
+        self.recommend_btn = QPushButton("推奨")
+        self.recommend_btn.setObjectName("RecommendBtn")
+        self.recommend_btn.clicked.connect(self.set_recommended_model)
+        
+        model_selector_layout.addWidget(self.model_combo, stretch=1)
+        model_selector_layout.addWidget(self.update_models_btn)
+        model_selector_layout.addWidget(self.recommend_btn)
+
+        saved_model = self.settings.value("model_name", "gemini-3.1-flash-lite-preview")
+        index = self.model_combo.findText(saved_model)
+        if index >= 0:
+            self.model_combo.setCurrentIndex(index)
+        
+        layout.addWidget(model_label)
+        layout.addLayout(model_selector_layout)
+
+        layout.addSpacing(10)
+
+        # --- APIキー設定エリア ---
+        api_label = QLabel("🔑 Gemini API キー:")
+        self.api_input = QLineEdit()
+        self.api_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.api_input.setPlaceholderText("APIキーを入力")
+        
+        saved_key = self.settings.value("api_key", "")
+        if saved_key:
+            self.api_input.setText(saved_key)
+
+        api_btn_layout = QHBoxLayout()
+        self.show_api_key_cb = QCheckBox("表示")
+        self.show_api_key_cb.stateChanged.connect(self.toggle_api_key_visibility)
+        
+        self.test_btn = QPushButton("接続テスト")
+        self.test_btn.setObjectName("TestBtn")
+        self.test_btn.clicked.connect(self.test_api_key)
+        
+        save_btn = QPushButton("設定保存")
+        save_btn.setObjectName("SaveBtn")
+        save_btn.clicked.connect(self.save_settings)
+        
+        api_btn_layout.addWidget(self.show_api_key_cb)
+        api_btn_layout.addStretch()
+        api_btn_layout.addWidget(self.test_btn)
+        api_btn_layout.addWidget(save_btn)
+        
+        layout.addWidget(api_label)
+        layout.addWidget(self.api_input)
+        layout.addLayout(api_btn_layout)
 
         layout.addStretch()
 
         # キャプチャ起動ボタン
-        self.snip_btn = QPushButton("🔍 画面を切り取って翻訳")
+        self.snip_btn = QPushButton("🔍 画面を切り取って実行")
+        self.snip_btn.setObjectName("SnipBtn")
         self.snip_btn.clicked.connect(self.start_snipping)
         layout.addWidget(self.snip_btn)
 
-        self.setLayout(layout)
         self.snipping_tool = None
+        self.test_worker = None
+        self.model_fetch_worker = None
+        self.help_window = None
+
+    def create_menu_bar(self):
+        """メニューバーの作成"""
+        menubar = self.menuBar()
+        help_menu = menubar.addMenu("ヘルプ")
+        
+        # 使い方アクション
+        help_action = QAction("使い方を表示", self)
+        help_action.triggered.connect(self.show_help)
+        help_menu.addAction(help_action)
+        
+        # バージョン情報
+        about_action = QAction("バージョン情報", self)
+        about_action.triggered.connect(lambda: QMessageBox.information(self, "バージョン情報", f"Glans_Miya\nバージョン: {self.version}"))
+        help_menu.addAction(about_action)
+
+    def show_help(self):
+        """READMEを表示する別ウィンドウを立ち上げる"""
+        if self.help_window is None:
+            self.help_window = HelpWindow()
+        self.help_window.show()
+        self.help_window.raise_()
+
+    def on_mode_changed(self):
+        """ボタンクリック時にモードを切り替える"""
+        sender = self.sender()
+        if sender == self.btn_ja:
+            self.current_mode = "ja_translate"
+        elif sender == self.btn_en:
+            self.current_mode = "en_translate"
+        elif sender == self.btn_dict:
+            self.current_mode = "dictionary"
+        self.update_mode_ui()
+
+    def update_mode_ui(self):
+        """選択されているモードに応じてボタンの見た目を更新する"""
+        self.btn_ja.setProperty("selected", str(self.current_mode == "ja_translate").lower())
+        self.btn_en.setProperty("selected", str(self.current_mode == "en_translate").lower())
+        self.btn_dict.setProperty("selected", str(self.current_mode == "dictionary").lower())
+        
+        # スタイルを再適用
+        self.btn_ja.style().unpolish(self.btn_ja)
+        self.btn_ja.style().polish(self.btn_ja)
+        self.btn_en.style().unpolish(self.btn_en)
+        self.btn_en.style().polish(self.btn_en)
+        self.btn_dict.style().unpolish(self.btn_dict)
+        self.btn_dict.style().polish(self.btn_dict)
+
+    def toggle_api_key_visibility(self, state):
+        if state == Qt.CheckState.Checked.value:
+            self.api_input.setEchoMode(QLineEdit.EchoMode.Normal)
+        else:
+            self.api_input.setEchoMode(QLineEdit.EchoMode.Password)
+
+    def fetch_models_list(self):
+        api_key = self.api_input.text().strip()
+        if not api_key:
+            QMessageBox.warning(self, "エラー", "APIキーを入力してください。")
+            return
+        self.update_models_btn.setEnabled(False)
+        self.update_models_btn.setText("取得中...")
+        self.model_fetch_worker = ModelFetchWorker(api_key)
+        self.model_fetch_worker.finished.connect(self.on_models_fetched)
+        self.model_fetch_worker.finished.connect(self.model_fetch_worker.deleteLater)
+        self.model_fetch_worker.start()
+
+    def on_models_fetched(self, success, models, error_msg):
+        self.update_models_btn.setEnabled(True)
+        self.update_models_btn.setText("更新")
+        if success and models:
+            self.model_combo.clear()
+            self.model_combo.addItems(models)
+            target_model = self.settings.value("model_name", "gemini-3.1-flash-lite-preview")
+            index = self.model_combo.findText(target_model)
+            if index >= 0: self.model_combo.setCurrentIndex(index)
+            else:
+                self.model_combo.insertItem(0, "gemini-3.1-flash-lite-preview")
+                self.model_combo.setCurrentIndex(0)
+            QMessageBox.information(self, "更新完了", "モデル一覧を取得しました。")
+        elif not success:
+            QMessageBox.critical(self, "取得失敗", f"失敗しました。\n\n詳細:\n{error_msg}")
+
+    def set_recommended_model(self):
+        index = self.model_combo.findText("gemini-3.1-flash-lite-preview")
+        if index >= 0:
+            self.model_combo.setCurrentIndex(index)
+
+    def test_api_key(self):
+        api_key = self.api_input.text().strip()
+        model_name = self.model_combo.currentText()
+        if not api_key:
+            QMessageBox.warning(self, "エラー", "APIキーを入力してください。")
+            return
+        self.test_btn.setEnabled(False)
+        self.test_btn.setText("テスト中...")
+        self.test_worker = ApiTestWorker(api_key, model_name)
+        self.test_worker.finished.connect(self.on_test_finished)
+        self.test_worker.finished.connect(self.test_worker.deleteLater)
+        self.test_worker.start()
+
+    def on_test_finished(self, success, message):
+        self.test_btn.setEnabled(True)
+        self.test_btn.setText("接続テスト")
+        if success:
+            QMessageBox.information(self, "テスト成功", f"APIへの接続に成功しました。")
+        else:
+            QMessageBox.critical(self, "テスト失敗", f"詳細:\n{message}")
+
+    def save_settings(self):
+        api_key = self.api_input.text().strip()
+        model_name = self.model_combo.currentText()
+        if api_key:
+            self.settings.setValue("api_key", api_key)
+            self.settings.setValue("model_name", model_name)
+            self.settings.setValue("last_mode", self.current_mode)
+            self.settings.sync()
+            QMessageBox.information(self, "保存完了", "設定を保存しました。")
+        else:
+            QMessageBox.warning(self, "エラー", "APIキーを入力してください。")
 
     def closeEvent(self, event):
-        # メインウィンドウが閉じられたらアプリ全体を終了する
         QApplication.quit()
         super().closeEvent(event)
 
     def start_snipping(self):
-        # 自身を非表示にして、画面キャプチャに写り込まないようにする
+        api_key = self.api_input.text().strip()
+        if not api_key:
+            QMessageBox.warning(self, "エラー", "APIキーを設定してください。")
+            return
         self.hide()
-        # 非表示が完全に画面に反映されるよう少し待機してからキャプチャ開始
+        # 画面非表示の時間を少し確保してからキャプチャ開始
         QTimer.singleShot(300, self.show_snipping_widget)
 
     def show_snipping_widget(self):
@@ -92,292 +386,311 @@ class MainWindow(QWidget):
         self.snipping_tool.show()
 
 
+class ModelFetchWorker(QThread):
+    finished = pyqtSignal(bool, list, str)
+    def __init__(self, api_key):
+        super().__init__()
+        self.api_key = api_key
+    def run(self):
+        try:
+            genai.configure(api_key=self.api_key)
+            models = []
+            for m in genai.list_models():
+                if 'generateContent' in m.supported_generation_methods:
+                    name = m.name.replace('models/', '')
+                    if name.startswith('gemini'): models.append(name)
+            models.sort(reverse=True)
+            self.finished.emit(True, models, "")
+        except Exception as e:
+            self.finished.emit(False, [], str(e))
+
+
+class ApiTestWorker(QThread):
+    finished = pyqtSignal(bool, str)
+    def __init__(self, api_key, model_name):
+        super().__init__()
+        self.api_key = api_key
+        self.model_name = model_name
+    def run(self):
+        try:
+            genai.configure(api_key=self.api_key)
+            model = genai.GenerativeModel(self.model_name)
+            response = model.generate_content("Ping")
+            self.finished.emit(True, response.text.strip())
+        except Exception as e:
+            self.finished.emit(False, str(e))
+
+
 class ResultWindow(QWidget):
     """
-    抽出したテキストと翻訳結果を表示するモダンなポップアップウィンドウ
+    結果表示ウィンドウ（モードの再選択機能を搭載）
     """
-    def __init__(self, original_text, translated_text):
+    def __init__(self, original_text, processed_text, image_bytes, api_key, model_name, current_mode):
         super().__init__()
-        self.setWindowTitle("Glans_Miya - 翻訳結果")
+        self.setWindowTitle("Glans_Miya - 結果")
         self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool)
-        self.resize(400, 300)
+        self.resize(500, 550)
+        
+        # 必要なデータを保持
+        self.image_bytes = image_bytes
+        self.api_key = api_key
+        self.model_name = model_name
+        self.current_mode = current_mode
+        self.worker = None
+
         self.setStyleSheet("""
-            QWidget {
-                background-color: #ffffff;
-                color: #333333;
-                font-family: 'Segoe UI', Meiryo, sans-serif;
-            }
-            QLabel {
-                font-weight: bold;
-                font-size: 14px;
-                color: #1a73e8;
-                margin-top: 10px;
-            }
-            QTextEdit {
-                border: 1px solid #e0e0e0;
-                border-radius: 8px;
-                padding: 8px;
-                font-size: 13px;
+            QWidget { background-color: #ffffff; color: #333333; font-family: 'Segoe UI', Meiryo, sans-serif; }
+            QLabel.SectionTitle { font-weight: bold; font-size: 13px; color: #1a73e8; margin-top: 10px; }
+            QTextEdit { border: 1px solid #e0e0e0; border-radius: 8px; padding: 8px; font-size: 13px; background-color: #f8f9fa; }
+            QPushButton { background-color: #1a73e8; color: white; border: none; border-radius: 6px; padding: 8px 16px; font-weight: bold; }
+            QPushButton:hover { background-color: #1557b0; }
+            QPushButton:disabled { background-color: #ccc; }
+            
+            QPushButton.ModeBtn {
                 background-color: #f8f9fa;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+                padding: 6px;
+                font-size: 11px;
+                color: #333;
             }
-            QPushButton {
-                background-color: #1a73e8;
-                color: white;
-                border: none;
-                border-radius: 6px;
-                padding: 8px 16px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #1557b0;
+            QPushButton.ModeBtn[selected="true"] {
+                background-color: #e8f0fe;
+                border: 2px solid #1a73e8;
+                color: #1a73e8;
             }
         """)
 
         layout = QVBoxLayout()
 
-        # 抽出テキストエリア
-        layout.addWidget(QLabel("📝 読み取ったテキスト:"))
+        # オリジナルテキスト
+        title_orig = QLabel("📝 読み取ったテキスト:")
+        title_orig.setProperty("class", "SectionTitle")
+        layout.addWidget(title_orig)
         self.original_edit = QTextEdit()
         self.original_edit.setPlainText(original_text)
         layout.addWidget(self.original_edit)
 
-        # 翻訳テキストエリア
-        layout.addWidget(QLabel("🌐 翻訳結果 (日本語):"))
-        self.translated_edit = QTextEdit()
-        self.translated_edit.setPlainText(translated_text)
-        layout.addWidget(self.translated_edit)
+        # モード切替エリア
+        layout.addSpacing(10)
+        mode_box = QHBoxLayout()
+        mode_box.addWidget(QLabel("✨ モード切替:"))
+        
+        self.btn_ja = QPushButton("日本語翻訳")
+        self.btn_en = QPushButton("英語翻訳")
+        self.btn_dict = QPushButton("辞書")
+        
+        self.mode_buttons = {
+            "ja_translate": self.btn_ja,
+            "en_translate": self.btn_en,
+            "dictionary": self.btn_dict
+        }
+        
+        for key, btn in self.mode_buttons.items():
+            btn.setProperty("class", "ModeBtn")
+            btn.clicked.connect(lambda checked, k=key: self.reprocess(k))
+            mode_box.addWidget(btn)
+        
+        layout.addLayout(mode_box)
+
+        # 処理結果
+        title_proc = QLabel("💡 処理結果:")
+        title_proc.setProperty("class", "SectionTitle")
+        layout.addWidget(title_proc)
+        self.processed_edit = QTextEdit()
+        self.processed_edit.setPlainText(processed_text)
+        layout.addWidget(self.processed_edit)
 
         # 閉じるボタン
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
-        close_btn = QPushButton("閉じる")
-        close_btn.clicked.connect(self.close)
-        btn_layout.addWidget(close_btn)
-
+        self.close_btn = QPushButton("閉じる")
+        self.close_btn.clicked.connect(self.close)
+        btn_layout.addWidget(self.close_btn)
         layout.addLayout(btn_layout)
+        
         self.setLayout(layout)
+        self.update_mode_ui()
+
+    def update_mode_ui(self):
+        """現在のモードに合わせてボタンのスタイルを更新"""
+        for key, btn in self.mode_buttons.items():
+            btn.setProperty("selected", str(key == self.current_mode).lower())
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+
+    def reprocess(self, new_mode):
+        """指定したモードで再処理を行う"""
+        if self.current_mode == new_mode and self.processed_edit.toPlainText() != "処理中...":
+            return
+            
+        self.current_mode = new_mode
+        self.update_mode_ui()
+        self.processed_edit.setPlainText("処理中...")
+        
+        # ボタンを一時無効化
+        for btn in self.mode_buttons.values(): btn.setEnabled(False)
+
+        self.worker = OcrTranslateWorker(self.image_bytes, self.api_key, self.model_name, self.current_mode)
+        self.worker.finished.connect(self.on_reprocess_finished)
+        self.worker.error.connect(self.on_reprocess_error)
+        self.worker.start()
+
+    def on_reprocess_finished(self, original_text, processed_text):
+        self.original_edit.setPlainText(original_text)
+        self.processed_edit.setPlainText(processed_text)
+        for btn in self.mode_buttons.values(): btn.setEnabled(True)
+
+    def on_reprocess_error(self, error_msg):
+        self.processed_edit.setPlainText(f"エラーが発生しました:\n{error_msg}")
+        for btn in self.mode_buttons.values(): btn.setEnabled(True)
 
 
 class OcrTranslateWorker(QThread):
     """
-    UIのフリーズを防ぐため、OCRと翻訳処理をバックグラウンドで行うワーカースレッド
+    Gemini APIを利用して画像からテキスト抽出と処理を行う
     """
-    finished = pyqtSignal(str, str) # 成功時のシグナル (抽出テキスト, 翻訳テキスト)
-    error = pyqtSignal(str)         # エラー時のシグナル (エラーメッセージ)
+    finished = pyqtSignal(str, str)
+    error = pyqtSignal(str)
 
-    def __init__(self, image_bytes):
+    def __init__(self, image_bytes, api_key, model_name, mode):
         super().__init__()
-        # 物理ファイルではなくメモリ上のバイトデータを保持
         self.image_bytes = image_bytes
-
-    async def _recognize_text(self, cv_img):
-        """
-        Windows標準のWinRT OCRを利用して極めて高速・高精度にテキストを抽出する非同期メソッド
-        """
-        # OpenCVの画像データをPNG形式のバイト列にメモリ上でエンコード
-        is_success, buffer = cv2.imencode(".png", cv_img)
-        if not is_success:
-            raise Exception("画像データの内部エンコードに失敗しました。")
-        image_bytes = buffer.tobytes()
-
-        # バイト列をWinRTのストリーム形式に変換
-        stream = InMemoryRandomAccessStream()
-        writer = DataWriter(stream)
-        writer.write_bytes(image_bytes)
-        await writer.store_async()
-        stream.seek(0)
-
-        # ストリームからSoftwareBitmapを生成
-        decoder = await BitmapDecoder.create_async(stream)
-        software_bitmap = await decoder.get_software_bitmap_async()
-
-        # 日本語対応のOCRエンジンを初期化（日本語パックがない場合はシステムのデフォルト言語）
-        lang = Language("ja-JP")
-        if OcrEngine.is_language_supported(lang):
-            engine = OcrEngine.try_create_from_language(lang)
-        else:
-            engine = OcrEngine.try_create_from_user_profile_languages()
-
-        if engine is None:
-            raise Exception("OCRエンジンを初期化できません。Windowsの言語設定(日本語)を確認してください。")
-
-        # 文字認識を実行
-        result = await engine.recognize_async(software_bitmap)
-        return result.text
-
-    def _translate_text(self, text):
-        """
-        Google翻訳APIを直接叩き、プロキシ等のSSLエラーに耐性を持たせた堅牢な翻訳処理
-        """
-        url = "https://translate.googleapis.com/translate_a/single"
-        params = {
-            "client": "gtx",
-            "sl": "auto",
-            "tl": "ja",
-            "dt": "t",
-            "q": text
-        }
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
-        
-        max_retries = 3
-        last_exception = None
-
-        for attempt in range(max_retries):
-            try:
-                # 通常のSSL検証ありでリクエスト
-                response = requests.get(url, params=params, headers=headers, timeout=10)
-                response.raise_for_status()
-                
-                # レスポンスのJSONから翻訳結果を抽出
-                result = response.json()
-                translated_text = "".join([sentence[0] for sentence in result[0] if sentence[0]])
-                return translated_text
-                
-            except requests.exceptions.SSLError as e:
-                # SSLエラー（プロキシやセキュリティソフトによるインスペクション等）が起きた場合のフォールバック
-                try:
-                    # InsecureRequestWarning を抑制
-                    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-                    # verify=False で証明書検証をスキップして強行接続
-                    response = requests.get(url, params=params, headers=headers, timeout=10, verify=False)
-                    response.raise_for_status()
-                    
-                    result = response.json()
-                    translated_text = "".join([sentence[0] for sentence in result[0] if sentence[0]])
-                    return translated_text
-                except Exception as e_fallback:
-                    last_exception = e_fallback
-                    time.sleep(2 ** attempt) # 指数的バックオフ (1秒, 2秒...)
-            
-            except Exception as e:
-                last_exception = e
-                time.sleep(2 ** attempt)
-
-        # 全てのリトライに失敗した場合
-        raise Exception(f"翻訳サーバーに接続できませんでした。(詳細: {str(last_exception)})")
+        self.api_key = api_key
+        self.model_name = model_name
+        self.mode = mode
 
     def run(self):
         try:
-            # --- OpenCVによる高速なインメモリ画像前処理 ---
-            # バイトデータからNumPy配列を生成し、OpenCVの画像データとしてデコード
             nparr = np.frombuffer(self.image_bytes, np.uint8)
             img_cv = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-
-            # 1. グレースケール化
             gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
-
-            # 2. リサイズ処理（巨大な領域が選択された場合のOCR遅延を防ぐ）
             max_width = 1200
             if gray.shape[1] > max_width:
                 scale = max_width / gray.shape[1]
                 gray = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
-
-            # 3. コントラスト強調（適応的ヒストグラム平坦化）でかすれ文字を補正
             clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
             gray = clahe.apply(gray)
-            # ------------------------------------------------
+            is_success, buffer = cv2.imencode(".png", gray)
+            processed_image_bytes = buffer.tobytes()
 
-            # WinRT OCRエンジンの非同期処理を同期的に実行して結果を取得
-            extracted_text = asyncio.run(self._recognize_text(gray)).strip()
-            
-            translated_text = ""
-            if extracted_text:
-                try:
-                    # 独自の堅牢なメソッドで翻訳を実行
-                    translated_text = self._translate_text(extracted_text)
-                except Exception as e:
-                    translated_text = f"【翻訳通信エラー】\n{str(e)}"
+            genai.configure(api_key=self.api_key)
+            model = genai.GenerativeModel(self.model_name)
+
+            if self.mode == "ja_translate":
+                role_prompt = "画像内のテキストをすべて抽出し、自然な日本語に翻訳して出力してください。"
+            elif self.mode == "en_translate":
+                role_prompt = "画像内のテキストをすべて抽出し、自然な英語に翻訳して出力してください。"
+            elif self.mode == "dictionary":
+                role_prompt = "画像内のメインのテキストを抽出し、その意味、発音(カタカナ)、使い方を辞書のように日本語で詳しく解説してください。"
             else:
-                extracted_text = "テキストが検出されませんでした。"
-            
-            self.finished.emit(extracted_text, translated_text)
+                role_prompt = "画像内のテキストを抽出してください。"
+
+            prompt = f"""
+            {role_prompt}
+            以下のJSON形式で厳密に出力してください。余計な説明は不要です。
+            {{
+              "original_text": "抽出した元のテキスト全体",
+              "processed_text": "翻訳または辞書としての回答内容"
+            }}
+            """
+
+            image_part = {"mime_type": "image/png", "data": processed_image_bytes}
+            generation_config = genai.types.GenerationConfig(response_mime_type="application/json")
+            response = model.generate_content([prompt, image_part], generation_config=generation_config)
+
+            try:
+                result_json = json.loads(response.text)
+                original_text = result_json.get("original_text", "検出なし")
+                processed_text = result_json.get("processed_text", "")
+            except:
+                original_text = "解析エラー"
+                processed_text = response.text
+
+            self.finished.emit(original_text, processed_text)
 
         except Exception as e:
-            self.error.emit(str(e))
+            self.error.emit(f"Gemini API エラー:\n{str(e)}")
 
 
 class SnippingWidget(QMainWindow):
     """
-    画面全体を暗くし、ドラッグで領域を選択するオーバーレイウィンドウ
+    画面切り取りオーバーレイ（マルチモニター対応）
     """
     def __init__(self, main_window=None):
         super().__init__()
-        self.main_window = main_window # 呼び出し元のメインウィンドウを保持
+        self.main_window = main_window 
         self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setCursor(Qt.CursorShape.CrossCursor)
-
-        # 全画面のスクリーンショットを取得
-        screen: QScreen = QGuiApplication.primaryScreen()
-        self.original_pixmap = screen.grabWindow(0)
         
-        # 画面サイズに合わせてウィンドウを展開
-        self.setGeometry(screen.geometry())
-
+        # 全画面（マルチモニター対応）の範囲を取得
+        total_rect = QRect()
+        for screen in QGuiApplication.screens():
+            total_rect = total_rect.united(screen.geometry())
+        
+        # 全画面をキャプチャ（仮想デスクトップ全体）
+        primary_screen = QGuiApplication.primaryScreen()
+        # 仮想デスクトップの全領域を画像として取得
+        self.original_pixmap = primary_screen.grabWindow(
+            0, total_rect.x(), total_rect.y(), total_rect.width(), total_rect.height()
+        )
+        
+        # ウィジェットを仮想デスクトップ全体のサイズに設定
+        self.setGeometry(total_rect)
+        
         self.begin_point = QPoint()
         self.end_point = QPoint()
         self.is_drawing = False
-        self.result_window = None
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        
-        # 取得したスクリーンショットを背景として描画
+        # 全画面画像を描画
         painter.drawPixmap(self.rect(), self.original_pixmap)
-        
-        # 画面全体に半透明の黒いレイヤーをかける
-        overlay_color = QColor(0, 0, 0, 100)
-        painter.fillRect(self.rect(), overlay_color)
+        # 半透明のオーバーレイを被せる
+        painter.fillRect(self.rect(), QColor(0, 0, 0, 100))
 
-        # 選択領域をクリアして元の明るい画像を見せる
+        # キャンセル案内の描画（プライマリモニターに表示するように計算）
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        font = painter.font()
+        font.setPointSize(12)
+        font.setBold(True)
+        painter.setFont(font)
+        
+        guide_text = "ドラッグで範囲指定 / Escキーでキャンセル"
+        metrics = painter.fontMetrics()
+        tw = metrics.horizontalAdvance(guide_text)
+        th = metrics.height()
+        
+        # プライマリ画面の範囲を取得して、その中での相対位置を計算
+        primary_rect = QGuiApplication.primaryScreen().geometry()
+        # ウィジェットの原点（仮想デスクトップ全体の左上）からの相対座標に変換
+        local_primary = primary_rect.translated(-self.geometry().topLeft())
+        
+        # プライマリ画面内での中央下部に配置
+        bg_x = local_primary.left() + (local_primary.width() - tw) // 2 - 20
+        bg_y = local_primary.bottom() - 100
+        rect_bg = QRect(bg_x, bg_y, tw + 40, th + 20)
+
+        painter.setBrush(QColor(0, 0, 0, 150))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRoundedRect(rect_bg, 10, 10)
+        
+        painter.setPen(QColor(255, 255, 255))
+        painter.drawText(rect_bg, Qt.AlignmentFlag.AlignCenter, guide_text)
+
+        # 選択範囲の描画
         if not self.begin_point.isNull() and not self.end_point.isNull():
             rect = QRect(self.begin_point, self.end_point).normalized()
-            
-            # 選択範囲の半透明マスクをくり抜く（元の画像を上書き描画）
-            cropped_pixmap = self.original_pixmap.copy(rect)
-            painter.drawPixmap(rect, cropped_pixmap)
-
-            # 選択範囲の境界線を描画
-            pen = QPen(QColor(26, 115, 232), 2) # Googleブルー
-            painter.setPen(pen)
+            # 選択された部分だけ元の画像を上書き（明るく見える）
+            painter.drawPixmap(rect, self.original_pixmap.copy(rect))
+            painter.setPen(QPen(QColor(26, 115, 232), 2))
             painter.drawRect(rect)
-            
-        # 操作案内の表示（まだドラッグを開始していない初期状態の時のみ）
-        if self.begin_point.isNull() and self.end_point.isNull():
-            guide_text = "マウスをドラッグして、翻訳したい範囲を選択してください"
-            font = painter.font()
-            font.setPointSize(14)
-            font.setBold(True)
-            font.setFamily('Segoe UI')
-            painter.setFont(font)
-            
-            metrics = painter.fontMetrics()
-            text_width = metrics.horizontalAdvance(guide_text)
-            text_height = metrics.height()
-            
-            # 画面中央の座標を計算
-            center_x = self.rect().width() // 2
-            center_y = self.rect().height() // 2
-            
-            # テキスト背景の余白
-            padding_x = 30
-            padding_y = 15
-            
-            bg_rect = QRect(center_x - text_width // 2 - padding_x,
-                            center_y - text_height // 2 - padding_y,
-                            text_width + padding_x * 2,
-                            text_height + padding_y * 2)
-            
-            # 角丸の半透明黒背景を描画
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor(0, 0, 0, 180))
-            painter.drawRoundedRect(bg_rect, 10, 10)
-            
-            # 白文字でテキストを描画
-            painter.setPen(QColor(255, 255, 255))
-            painter.drawText(bg_rect, Qt.AlignmentFlag.AlignCenter, guide_text)
+
+    def keyPressEvent(self, event):
+        """Escキーが押されたらキャンセルして閉じる"""
+        if event.key() == Qt.Key.Key_Escape:
+            self.close()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -395,76 +708,59 @@ class SnippingWidget(QMainWindow):
         if event.button() == Qt.MouseButton.LeftButton:
             self.is_drawing = False
             rect = QRect(self.begin_point, self.end_point).normalized()
-            
-            # 範囲が小さすぎる（クリックのみ）場合は処理せず閉じる
             if rect.width() <= 10 or rect.height() <= 10:
                 self.close()
                 return
-
-            # 領域選択された場合は非同期処理を開始する
             self.process_selected_area(rect)
 
     def process_selected_area(self, rect: QRect):
-        """
-        選択された領域の画像を切り抜き、別スレッドでOCRと翻訳を実行する
-        """
-        # 処理中であることをユーザーに伝えるためカーソルを砂時計にする
         self.setCursor(Qt.CursorShape.WaitCursor)
-
-        # 選択領域のピックスマップを取得
+        # 切り抜かれたピックスマップをバイトデータに変換
         cropped_pixmap = self.original_pixmap.copy(rect)
-        
-        # 物理ファイルを介さず、QBufferを使ってメモリ上でバイトデータを取得する（高速化）
         buffer = QBuffer()
         buffer.open(QIODevice.OpenModeFlag.ReadWrite)
         cropped_pixmap.save(buffer, "PNG")
-        image_bytes = buffer.data().data()
+        self.last_image_bytes = buffer.data().data()
 
-        # ワーカースレッドの生成とシグナルの接続
-        self.worker = OcrTranslateWorker(image_bytes)
+        api_key = self.main_window.api_input.text().strip()
+        model_name = self.main_window.model_combo.currentText()
+        mode = self.main_window.current_mode
+        
+        self.worker = OcrTranslateWorker(self.last_image_bytes, api_key, model_name, mode)
         self.worker.finished.connect(self.on_worker_finished)
         self.worker.error.connect(self.on_worker_error)
-        self.worker.finished.connect(self.worker.deleteLater)
-        self.worker.error.connect(self.worker.deleteLater)
         self.worker.start()
 
-    def on_worker_finished(self, extracted_text, translated_text):
-        # 処理成功時のコールバック
+    def on_worker_finished(self, original_text, processed_text):
         self.setCursor(Qt.CursorShape.CrossCursor)
-        # 結果ウィンドウをMainWindowに保持させる（ガベージコレクションによる消滅を防止）
-        if self.main_window:
-            self.main_window.result_window = ResultWindow(extracted_text, translated_text)
-            self.main_window.result_window.show()
-        self.cleanup_and_close()
+        # ResultWindowへデータを渡す
+        api_key = self.main_window.api_input.text().strip()
+        model_name = self.main_window.model_combo.currentText()
+        mode = self.main_window.current_mode
+        
+        self.main_window.result_window = ResultWindow(
+            original_text, processed_text, self.last_image_bytes, api_key, model_name, mode
+        )
+        self.main_window.result_window.show()
+        self.close()
 
     def on_worker_error(self, error_msg):
-        # 処理失敗時のコールバック
         self.setCursor(Qt.CursorShape.CrossCursor)
-        if self.main_window:
-            self.main_window.result_window = ResultWindow("エラーが発生しました", error_msg)
-            self.main_window.result_window.show()
-        self.cleanup_and_close()
-
-    def cleanup_and_close(self):
-        # 物理ファイルを介していないため削除処理は不要。オーバーレイウィンドウのみ閉じる
+        self.main_window.result_window = ResultWindow("エラー", error_msg, None, "", "", "")
+        self.main_window.result_window.show()
         self.close()
 
     def closeEvent(self, event):
-        # SnippingWidgetが閉じる際に、元の操作パネルを再表示させる
-        if self.main_window:
-            self.main_window.showNormal()
+        if self.main_window: self.main_window.showNormal()
         super().closeEvent(event)
 
 
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName("Glans_Miya")
-    app.setQuitOnLastWindowClosed(False) # 意図せぬサイレント終了を防止
-    
-    # 常に表示される小さな操作ウィンドウを起動
+    app.setQuitOnLastWindowClosed(False)
     main_win = MainWindow()
     main_win.show()
-    
     sys.exit(app.exec())
 
 if __name__ == '__main__':
