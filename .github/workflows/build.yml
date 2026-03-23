@@ -37,9 +37,7 @@ jobs:
         --add-data "README.md;." \
         --exclude-module "tkinter" \
         --exclude-module "unittest" \
-        --exclude-module "email" \
         --exclude-module "pydoc" \
-        --exclude-module "http" \
         --upx-dir "C:/ProgramData/chocolatey/bin" \
         "app.py"
 
