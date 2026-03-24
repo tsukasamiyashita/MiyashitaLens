@@ -32,7 +32,7 @@ jobs:
         --onefile 
         --noconsole 
         --clean 
-        --name "Glans_Miya-v1.0.1" 
+        --name "Glans_Miya-v1.0.2" 
         --add-data "README.md;."
         app.py
 
@@ -40,5 +40,5 @@ jobs:
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: Glans_Miya-v1.0.1
-        path: dist/Glans_Miya-v1.0.1.exe
+        name: Glans_Miya-v1.0.2
+        path: dist/Glans_Miya-v1.0.2.exe

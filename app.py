@@ -2,8 +2,6 @@ import sys
 import os
 import time
 import json
-import cv2
-import numpy as np
 from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, 
                              QPushButton, QTextEdit, QLabel, QMainWindow, QLineEdit, 
                              QMessageBox, QComboBox, QCheckBox, QMenuBar, QMenu)
@@ -46,7 +44,7 @@ class ResultWindow(QWidget):
     """ 結果表示ウィンドウ（モードの再選択機能を搭載） """
     def __init__(self, original_text, processed_text, image_bytes, api_key, model_name, current_mode):
         super().__init__()
-        self.setWindowTitle("Glans_Miya v1.0.1 - 結果")
+        self.setWindowTitle("Glans_Miya v1.0.2 - 結果")
         self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool)
         self.resize(500, 550)
         self.image_bytes = image_bytes
@@ -118,15 +116,8 @@ class OcrTranslateWorker(QThread):
 
     def run(self):
         try:
-            nparr = np.frombuffer(self.image_bytes, np.uint8)
-            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-            if img is None:
-                raise Exception("画像のデコードに失敗しました。")
-            
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            is_success, buffer = cv2.imencode(".png", gray)
-            if not is_success:
-                raise Exception("画像の変換に失敗しました。")
+            # OpenCVを使用せず、PyQtで生成されたPNGバイトデータをそのまま使用
+            image_data = self.image_bytes
 
             genai.configure(api_key=self.api_key)
             model = genai.GenerativeModel(self.model_name)
@@ -138,7 +129,7 @@ class OcrTranslateWorker(QThread):
             prompt = f"{prompts.get(self.mode, '')}\n必ず以下のJSON形式のみで出力してください。余計な文章は一切含めないでください: {{'original_text': '原文', 'processed_text': '結果'}}"
             
             response = model.generate_content(
-                [prompt, {"mime_type": "image/png", "data": buffer.tobytes()}], 
+                [prompt, {"mime_type": "image/png", "data": image_data}], 
                 generation_config=genai.types.GenerationConfig(response_mime_type="application/json")
             )
             
@@ -192,7 +183,7 @@ class ApiTestWorker(QThread):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.version = "v1.0.1"
+        self.version = "v1.0.2"
         self.setWindowTitle(f"Glans_Miya {self.version}")
         # 初期状態は最前面に設定。setup_ui 内の設定読み込みで上書きされます。
         self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool)
