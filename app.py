@@ -68,7 +68,7 @@ class HelpWindow(QWidget):
     """ README.md の内容を表示するウィンドウ """
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Glans_Miya - 使い方")
+        self.setWindowTitle("MiyashitaLens - 使い方")
         self.resize(500, 600)
         self.setWindowFlags(Qt.WindowType.Window)
         layout = QVBoxLayout()
@@ -414,7 +414,7 @@ class ResultWindow(QWidget):
     """ 結果表示ウィンドウ """
     def __init__(self, image_bytes, config, current_mode, worker=None):
         super().__init__()
-        self.setWindowTitle("Glans_Miya v1.1.0 - 結果")
+        self.setWindowTitle("MiyashitaLens v1.1.0 - 結果")
         self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool)
         self.resize(500, 550)
         self.image_bytes = image_bytes
@@ -675,7 +675,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.version = "v1.1.0"
-        self.setWindowTitle(f"Glans_Miya {self.version}")
+        self.setWindowTitle(f"MiyashitaLens {self.version}")
         self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool)
         self.resize(360, 480)
         self.setStyleSheet("""
@@ -696,7 +696,7 @@ class MainWindow(QMainWindow):
         menubar = self.menuBar()
         help_menu = menubar.addMenu("ヘルプ")
         help_menu.addAction("使い方を表示", self.show_help)
-        help_menu.addAction("バージョン情報", lambda: QMessageBox.information(self, "情報", f"Glans_Miya {self.version}"))
+        help_menu.addAction("バージョン情報", lambda: QMessageBox.information(self, "情報", f"MiyashitaLens {self.version}"))
 
         central = QWidget(); self.setCentralWidget(central); layout = QVBoxLayout(central)
         layout.addWidget(QLabel("<b>【使い方】</b><br>1. モードを選択しAPI設定を行う<br>2. 画面を切り取って実行"))
@@ -729,7 +729,7 @@ class MainWindow(QMainWindow):
         snip_btn = QPushButton("🔍 画面を切り取って実行", objectName="SnipBtn"); snip_btn.clicked.connect(self.start_snipping)
         layout.addWidget(snip_btn)
 
-        self.settings = QSettings(os.path.join(os.path.expanduser('~'), 'Glans_Miya', 'settings.ini'), QSettings.Format.IniFormat)
+        self.settings = QSettings(os.path.join(os.path.expanduser('~'), 'MiyashitaLens', 'settings.ini'), QSettings.Format.IniFormat)
         
         is_ontop = self.settings.value("always_on_top", "true").lower() == "true"
         self.ontop_cb.setChecked(is_ontop)
