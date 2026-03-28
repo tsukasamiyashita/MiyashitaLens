@@ -101,7 +101,7 @@ class SettingsWindow(QDialog):
             QPushButton:hover { background-color: #f1f3f4; }
             QPushButton#PrimaryBtn { background-color: #1a73e8; color: white; border: none; font-weight: bold; }
             QPushButton#PrimaryBtn:hover { background-color: #1557b0; }
-            QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QListWidget { border: 1px solid #ccc; border-radius: 4px; padding: 5px; background-color: white;}
+            QLineEdit, QComboBox, QListWidget { border: 1px solid #ccc; border-radius: 4px; padding: 5px; background-color: white;}
             QTabWidget::pane { border: 1px solid #ccc; background-color: white; border-radius: 4px;}
             QTabBar::tab { background: #e8eaed; border: 1px solid #ccc; padding: 8px 20px; border-top-left-radius: 4px; border-top-right-radius: 4px; }
             QTabBar::tab:selected { background: white; border-bottom-color: white; font-weight: bold; color: #1a73e8; }
@@ -210,7 +210,7 @@ class SettingsWindow(QDialog):
 
         l2_bot = QHBoxLayout()
         btn_limit = QPushButton("ℹ️ 制限と仕様を確認")
-        btn_limit.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://ai.google.dev/pricing")))
+        btn_limit.clicked.connect(self.show_api_limits_summary)
         l2_bot.addWidget(btn_limit)
         l2_bot.addStretch()
         btn_reco_model = QPushButton("🔄 推奨値")
@@ -294,6 +294,48 @@ class SettingsWindow(QDialog):
         layout.addWidget(g4)
 
         return tab
+
+    def show_api_limits_summary(self):
+        """ ドキュメント内容に基づいた制限と仕様の要約ダイアログを表示する """
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Gemini API 制限と仕様 (要約)")
+        dialog.resize(550, 450)
+        dialog.setStyleSheet("""
+            QDialog { background-color: #f8f9fa; color: #333; }
+            QTextEdit { border: 1px solid #ccc; border-radius: 4px; padding: 10px; font-size: 13px; background-color: white; line-height: 1.5; }
+            QPushButton { background-color: #1a73e8; color: white; border: none; border-radius: 4px; padding: 8px 16px; font-weight: bold; }
+            QPushButton:hover { background-color: #1557b0; }
+        """)
+        layout = QVBoxLayout(dialog)
+        
+        text_edit = QTextEdit()
+        text_edit.setReadOnly(True)
+        summary_text = """<b>【Gemini API 制限と仕様の要約 (2026年最新版)】</b><br><br>
+
+<b>■ 無料枠 (Free Tier) の厳格な制限</b><br>
+・現在、無料枠のリクエスト制限は非常に厳しく設定されています（例: Gemini 2.5 Proで約2 RPM / 50 RPD）。<br>
+・連続してリクエストを送ったり並列処理を行うと、すぐにAPI制限エラー（429 Resource Exhausted）が発生します。<br>
+・入力したデータは、Googleの製品改善やモデル学習に利用される可能性があります。<br><br>
+
+<b>■ 課金枠 (Paid Tier / Tier 1) のメリット</b><br>
+・課金設定（クレジットカード登録）を行うだけで即時アップグレードされ、実用的な水準（例: 3.1 Flash-Liteで300 RPM / 1500 RPDなど）に制限が大幅に引き上げられます。<br>
+・入力データがGoogleの学習に利用されなくなるため、プライバシー保護や業務利用における必須条件となります。<br>
+・バッチ処理やコンテキストキャッシングといった、コスト・負荷を削減する高度な機能が利用可能になります。<br><br>
+
+<b>■ 同時実行（スレッド処理）に関する注意点</b><br>
+・1分間の上限（RPM）内であっても、非同期処理等で一度に大量のリクエストを同時送信すると「バースト制限」に引っかかりエラーとなります。<br>
+・安定して高速処理を行うには、スレッド数を絞るか、システム側で適切な待機時間（スリープ）やエラー時の再試行（指数的バックオフ）を設定する必要があります。"""
+        text_edit.setHtml(summary_text)
+        layout.addWidget(text_edit)
+        
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        close_btn = QPushButton("閉じる")
+        close_btn.clicked.connect(dialog.accept)
+        btn_layout.addWidget(close_btn)
+        layout.addLayout(btn_layout)
+        
+        dialog.exec()
 
     def add_prompt(self, tab_key):
         text = self.tab_ui[tab_key]["prompt_input"].text().strip()
