@@ -776,6 +776,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.version = "v1.3.0"
         self.setWindowTitle(f"MiyashitaLens {self.version}")
+        self.setWindowIcon(QIcon(resource_path("icon.ico")))
         self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
         self.resize(280, 350)
         self.setStyleSheet("""
@@ -830,7 +831,7 @@ class MainWindow(QMainWindow):
         if not QSystemTrayIcon.isSystemTrayAvailable():
             return
         self.tray_icon = QSystemTrayIcon(self)
-        self.tray_icon.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon))
+        self.tray_icon.setIcon(QIcon(resource_path("icon.ico")))
         self.tray_icon.setToolTip(f"MiyashitaLens {self.version}")
         menu = QMenu()
         menu.addAction("ウィンドウを表示", self._restore_from_tray)
@@ -1107,7 +1108,14 @@ class SnippingWidget(QMainWindow):
             self.main_win.showNormal()
 
 if __name__ == '__main__':
+    # Windowsでタスクバーアイコンを正しく表示するための設定
+    if sys.platform == 'win32':
+        import ctypes
+        myappid = 'mycompany.myproduct.subproduct.version' # 任意の文字列
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+
     app = QApplication(sys.argv)
+    app.setWindowIcon(QIcon(resource_path("icon.ico")))
     app.setQuitOnLastWindowClosed(False)
     main_win = MainWindow()
     # main_win.show()  # 起動時にウィンドウを表示しない

@@ -33,7 +33,9 @@ jobs:
         --noconsole 
         --clean 
         --name "MiyashitaLens-v1.3.0" 
+        --icon="icon.ico"
         --add-data "README.md;."
+        --add-data "icon.ico;."
         app.py
 
     # 完成したexeファイルをGitHub上にアップロード
