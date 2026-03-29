@@ -9,8 +9,8 @@ from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                              QMessageBox, QComboBox, QCheckBox, QMenuBar, QMenu,
                              QDialog, QTabWidget, QGroupBox, QRadioButton, QSpinBox,
                              QDoubleSpinBox, QListWidget, QListWidgetItem, QAbstractItemView,
-                             QButtonGroup, QFrame)
-from PyQt6.QtCore import Qt, QRect, QPoint, QTimer, QThread, pyqtSignal, QBuffer, QIODevice, QSettings, QUrl
+                             QButtonGroup, QFrame, QSystemTrayIcon, QStyle)
+from PyQt6.QtCore import Qt, QRect, QPoint, QTimer, QThread, pyqtSignal, QBuffer, QIODevice, QSettings, QUrl, QEvent
 from PyQt6.QtGui import QPainter, QColor, QPen, QGuiApplication, QScreen, QPixmap, QIcon, QAction, QDesktopServices
 
 import google.generativeai as genai
@@ -85,6 +85,29 @@ class HelpWindow(QWidget):
         close_btn.clicked.connect(self.close)
         layout.addWidget(close_btn)
         self.setLayout(layout)
+
+class HistoryWindow(QDialog):
+    """ 履歴表示ウィンドウ """
+    def __init__(self, history, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("履歴 (最新30件)")
+        self.resize(500, 400)
+        layout = QVBoxLayout(self)
+        self.list_widget = QListWidget()
+        for item in history:
+            self.list_widget.addItem(f"{item['time']} - {item['text'][:30]}...")
+        layout.addWidget(self.list_widget)
+        btn_open = QPushButton("選択した履歴を開く")
+        btn_open.clicked.connect(self.open_selected)
+        layout.addWidget(btn_open)
+        self.history = history
+        self.selected_item = None
+
+    def open_selected(self):
+        idx = self.list_widget.currentRow()
+        if idx >= 0:
+            self.selected_item = self.history[idx]
+            self.accept()
 
 class SettingsWindow(QDialog):
     """ API詳細設定画面 """
@@ -732,7 +755,78 @@ class MainWindow(QMainWindow):
         self.active_results = [] 
         self.snipping_tool = None 
         self.worker = None
+        self.tray_icon = None
+        self.history = []
         self.setup_ui()
+        self._setup_system_tray()
+        self._load_history()
+
+    def _load_history(self):
+        history_json = self.settings.value("history", "[]")
+        try:
+            self.history = json.loads(history_json)
+        except:
+            self.history = []
+
+    def _save_history(self):
+        self.settings.setValue("history", json.dumps(self.history))
+
+    def add_to_history(self, original_text, processed_text):
+        item = {
+            "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "text": original_text,
+            "result": processed_text,
+            "mode": self.current_mode
+        }
+        self.history.insert(0, item)
+        self.history = self.history[:30]
+        self._save_history()
+
+    def show_history(self):
+        win = HistoryWindow(self.history, self)
+        if win.exec() == QDialog.DialogCode.Accepted and win.selected_item:
+            item = win.selected_item
+            # 結果ウィンドウを再表示
+            res_win = ResultWindow(None, {}, item['mode'])
+            res_win.on_processing_finished(item['text'], item['result'])
+            res_win.show()
+
+    def _setup_system_tray(self):
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            return
+        self.tray_icon = QSystemTrayIcon(self)
+        self.tray_icon.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon))
+        self.tray_icon.setToolTip(f"MiyashitaLens {self.version}")
+        menu = QMenu()
+        menu.addAction("ウィンドウを表示", self._restore_from_tray)
+        menu.addAction("履歴を表示", self.show_history)
+        menu.addSeparator()
+        menu.addAction("終了", QApplication.instance().quit)
+        self.tray_icon.setContextMenu(menu)
+        self.tray_icon.activated.connect(self._on_tray_activated)
+        self.tray_icon.show()
+
+    def _on_tray_activated(self, reason):
+        if reason == QSystemTrayIcon.ActivationReason.Trigger:
+            self.start_snipping(restore_main_after=False)
+        elif reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+            self._restore_from_tray()
+
+    def _restore_from_tray(self):
+        if self.isMinimized():
+            self.showNormal()
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def changeEvent(self, event):
+        if (
+            event.type() == QEvent.Type.WindowStateChange
+            and self.tray_icon is not None
+            and self.isMinimized()
+        ):
+            QTimer.singleShot(0, self.hide)
+        super().changeEvent(event)
 
     def setup_ui(self):
         menubar = self.menuBar()
@@ -758,6 +852,11 @@ class MainWindow(QMainWindow):
         api_btn.setObjectName("ActionBtn")
         api_btn.clicked.connect(self.open_settings)
         setting_box.addWidget(api_btn)
+        
+        history_btn = QPushButton("📜 履歴")
+        history_btn.setObjectName("ActionBtn")
+        history_btn.clicked.connect(self.show_history)
+        setting_box.addWidget(history_btn)
         
         self.ontop_cb = QCheckBox("最前面表示")
         self.ontop_cb.clicked.connect(self.toggle_always_on_top)
@@ -808,20 +907,23 @@ class MainWindow(QMainWindow):
     def show_help(self):
         self.hw = HelpWindow(); self.hw.show()
 
-    def start_snipping(self):
+    def start_snipping(self, *_, restore_main_after=True):
         plan = self.settings.value("plan", "free")
         api_key = self.settings.value(f"{plan}_api_key", "")
         if not api_key:
-            QMessageBox.warning(self, "エラー", "APIキーが設定されていません。\n「⚙️ API詳細設定」からキーを設定してください。")
+            parent = self if restore_main_after else None
+            QMessageBox.warning(parent, "エラー", "APIキーが設定されていません。\n「⚙️ API詳細設定」からキーを設定してください。")
             return
         
+        self._restore_main_after_snip = restore_main_after
         self.hide()
         QTimer.singleShot(300, self.init_snipping)
 
     def init_snipping(self):
         self.status_label.setText("範囲を選択してください...")
         self.status_label.setStyleSheet("color: #666;")
-        self.snipping_tool = SnippingWidget(self)
+        restore = getattr(self, "_restore_main_after_snip", True)
+        self.snipping_tool = SnippingWidget(self, restore_main=restore)
         self.snipping_tool.show()
 
     def process_captured_image(self, img_data):
@@ -857,6 +959,9 @@ class MainWindow(QMainWindow):
         self.worker.finished.connect(res_win.on_processing_finished)
         self.worker.error.connect(res_win.on_processing_error)
         
+        # 履歴保存の接続を追加
+        self.worker.finished.connect(self.add_to_history)
+        
         self.worker.finished.connect(self.reset_status)
         self.worker.error.connect(self.reset_status_error)
 
@@ -879,9 +984,10 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
 class SnippingWidget(QMainWindow):
-    def __init__(self, main_win):
+    def __init__(self, main_win, restore_main=True):
         super().__init__()
         self.main_win = main_win
+        self.restore_main = restore_main
         self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setCursor(Qt.CursorShape.CrossCursor)
@@ -914,7 +1020,8 @@ class SnippingWidget(QMainWindow):
     def keyPressEvent(self, e):
         if e.key() == Qt.Key.Key_Escape:
             self.close()
-            self.main_win.showNormal()
+            if self.restore_main:
+                self.main_win.showNormal()
 
     def mousePressEvent(self, e): 
         self.begin = e.pos()
@@ -957,11 +1064,12 @@ class SnippingWidget(QMainWindow):
             self.main_win.process_captured_image(img_bytes)
         
         self.close()
-        self.main_win.showNormal()
+        if self.restore_main:
+            self.main_win.showNormal()
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     main_win = MainWindow()
-    main_win.show()
+    # main_win.show()  # 起動時にウィンドウを表示しない
     sys.exit(app.exec())
