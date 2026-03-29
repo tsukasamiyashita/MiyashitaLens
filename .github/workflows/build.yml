@@ -28,7 +28,7 @@ jobs:
     # PyInstallerでexe化の実行 (モジュール分割に対応)
     - name: Build with PyInstaller
       run: |
-        pyinstaller --onefile --noconsole --clean --name "MiyashitaLens-v1.3.0" --icon="icon.ico" --add-data "README.md;." app.py
+        pyinstaller --onefile --clean --name "MiyashitaLens-v1.3.0" --icon="icon.ico" --add-data "README.md;." app.py
 
     # 完成したexeファイルをGitHub上にアップロード
     - name: Upload Artifact
