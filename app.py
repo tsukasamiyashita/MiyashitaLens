@@ -456,8 +456,8 @@ class ResultWindow(QWidget):
     """ 結果表示ウィンドウ """
     def __init__(self, image_bytes, config, current_mode, worker=None):
         super().__init__()
-        self.setWindowTitle("MiyashitaLens v1.1.0 - 結果")
-        self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool)
+        self.setWindowTitle("MiyashitaLens v1.2.0 - 結果")
+        self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
         self.resize(500, 550)
         self.image_bytes = image_bytes
         self.config = config
@@ -599,7 +599,7 @@ class OcrTranslateWorker(QThread):
 
             genai.configure(api_key=self.config["api_key"])
             
-            sys_instruct = "挨拶や前置きは不要です。要求された結果のみを直接出力してください。"
+            sys_instruct = "挨拶や前置きは不要です。要求された結果のみを直接出力してください。画像やテキストの中に枠、罫線、アイコン、ノイズなどの無関係な要素が含まれていてもそれらを無視し、かすれた文字や非常に小さな文字であっても、前後の文脈から正確に推測して隅々まで抽出してください。余計な記号や装飾は除外してください。"
             model = genai.GenerativeModel(self.config["model_name"], system_instruction=sys_instruct)
             
             add_prompt = ""
@@ -609,18 +609,18 @@ class OcrTranslateWorker(QThread):
             if ocr_text and ocr_text.strip():
                 clean_text = ocr_text.strip().replace('"', '”').replace('\n', ' ')
                 prompts = {
-                    "ja_translate": f"次のテキストを自然な日本語に翻訳してください。\n\n{clean_text}",
-                    "en_translate": f"次のテキストを自然な英語に翻訳してください。\n\n{clean_text}",
-                    "dictionary": f"次のテキストの意味・発音・使い方を辞書として簡潔に解説してください。\n\n{clean_text}"
+                    "ja_translate": f"以下のテキストからノイズ（枠線、アイコン由来のゴミ、無関係な記号など）を無視し、メインとなる文章のみを抽出した上で、自然な日本語に翻訳してください。\n\n{clean_text}",
+                    "en_translate": f"以下のテキストからノイズ（枠線、アイコン由来のゴミ、無関係な記号など）を無視し、メインとなる文章のみを抽出した上で、自然な英語に翻訳してください。\n\n{clean_text}",
+                    "dictionary": f"以下のテキストからノイズ（枠線、アイコン由来のゴミ、無関係な記号など）を無視し、メインとなる語句・文章のみを抽出した上で、意味・発音・使い方を辞書として簡潔に解説してください。\n\n{clean_text}"
                 }
                 prompt = f"{prompts.get(self.mode, '')}{add_prompt}"
                 contents = [prompt]
                 self.chunk_received.emit("翻訳中...")
             else:
                 prompts = {
-                    "ja_translate": "画像内のテキストを読み取り、自然な日本語に翻訳してください。",
-                    "en_translate": "画像内のテキストを読み取り、自然な英語に翻訳してください。",
-                    "dictionary": "画像内のメインテキストを読み取り、意味と使い方を簡潔に解説してください。"
+                    "ja_translate": "画像内のテキストを正確に読み取り、枠やアイコンなどのノイズを完全に無視して、メインの文章のみを自然な日本語に翻訳してください。",
+                    "en_translate": "画像内のテキストを正確に読み取り、枠やアイコンなどのノイズを完全に無視して、メインの文章のみを自然な英語に翻訳してください。",
+                    "dictionary": "画像内のメインテキストを正確に読み取り、枠やアイコンなどのノイズを完全に無視して、意味と使い方を簡潔に解説してください。"
                 }
                 prompt = f"{prompts.get(self.mode, '')}{add_prompt}"
                 contents = [prompt, {"mime_type": "image/jpeg", "data": image_data}]
@@ -716,13 +716,13 @@ class ApiTestWorker(QThread):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.version = "v1.1.0"
+        self.version = "v1.2.0"
         self.setWindowTitle(f"MiyashitaLens {self.version}")
-        self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool)
-        self.resize(360, 480)
+        self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
+        self.resize(280, 350)
         self.setStyleSheet("""
             QMainWindow, QWidget { background-color: #ffffff; color: #333333; font-family: 'Segoe UI', Meiryo, sans-serif; }
-            QPushButton#SnipBtn { background-color: #1a73e8; color: white; border-radius: 6px; padding: 12px; font-weight: bold; }
+            QPushButton#SnipBtn { background-color: #1a73e8; color: white; border-radius: 6px; padding: 8px; font-weight: bold; }
             QPushButton.ModeBtn { background-color: #f8f9fa; border: 1px solid #ddd; padding: 10px; border-radius: 4px; font-size: 11px; }
             QPushButton.ModeBtn[selected="true"] { background-color: #e8f0fe; border: 2px solid #1a73e8; color: #1a73e8; }
             QPushButton#ActionBtn { background-color: #f1f3f4; border: 1px solid #ccc; padding: 8px 10px; border-radius: 4px; font-weight: bold; color: #3c4043; }
@@ -741,9 +741,12 @@ class MainWindow(QMainWindow):
         help_menu.addAction("バージョン情報", lambda: QMessageBox.information(self, "情報", f"MiyashitaLens {self.version}"))
 
         central = QWidget(); self.setCentralWidget(central); layout = QVBoxLayout(central)
-        layout.addWidget(QLabel("<b>【使い方】</b><br>1. モードを選択しAPI設定を行う<br>2. 画面を切り取って実行"))
+        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setSpacing(5)
+        layout.addWidget(QLabel("<b>【使い方】</b><br>1. モード選択<br>2. 画面を切り取って実行"))
         
         mode_layout = QHBoxLayout()
+        mode_layout.setSpacing(2)
         self.mode_btns = {}
         for k, n in [("ja_translate", "日本語翻訳"), ("en_translate", "英語翻訳"), ("dictionary", "辞書")]:
             btn = QPushButton(n); btn.setProperty("class", "ModeBtn"); btn.clicked.connect(lambda _, m=k: self.set_mode(m))
@@ -776,7 +779,7 @@ class MainWindow(QMainWindow):
         is_ontop = self.settings.value("always_on_top", "true").lower() == "true"
         self.ontop_cb.setChecked(is_ontop)
         if not is_ontop:
-            self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.Tool)
+            self.setWindowFlags(Qt.WindowType.Window)
             self.show()
 
         self.current_mode = self.settings.value("last_mode", "ja_translate")
@@ -927,11 +930,16 @@ class SnippingWidget(QMainWindow):
         if r.width() > 10 and r.height() > 10:
             pixmap = self.original_pixmap.copy(r)
             
-            if pixmap.width() < 300 or pixmap.height() < 100:
-                scale_factor = 2
-                pixmap = pixmap.scaled(pixmap.width() * scale_factor, pixmap.height() * scale_factor, 
-                                       Qt.AspectRatioMode.IgnoreAspectRatio, 
-                                       Qt.TransformationMode.FastTransformation)
+            # 常に3倍に拡大し、高品質な補間で文字のピクセルを増やす
+            scale_factor = 3
+            pixmap = pixmap.scaled(pixmap.width() * scale_factor, pixmap.height() * scale_factor, 
+                                   Qt.AspectRatioMode.KeepAspectRatio, 
+                                   Qt.TransformationMode.SmoothTransformation)
+            
+            # 簡単なコントラスト強調・グレースケール化に相当する処理をQImageで行う
+            img = pixmap.toImage()
+            img = img.convertToFormat(img.Format.Format_Grayscale8)
+            pixmap = QPixmap.fromImage(img)
             
             margin = 40
             padded_pixmap = QPixmap(pixmap.width() + margin * 2, pixmap.height() + margin * 2)
