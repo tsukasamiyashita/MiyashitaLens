@@ -605,13 +605,21 @@ class ResultWindow(QWidget):
 
         self.current_mode = new_mode
         self.update_mode_ui()
+        
+        # 履歴から開いた場合（image_bytesがNone）は現在のテキストを保持
+        is_history = (self.image_bytes is None)
+        # setPlainTextする前に現在のテキストを取得
+        original_text = self.original_edit.toPlainText() if is_history else ""
+        
         self.original_edit.setPlainText("解析中...")
         self.processed_edit.setPlainText("待機中...")
         
         self.cancel_btn.setEnabled(True)
         self.cancel_btn.show()
 
-        self.worker = OcrTranslateWorker(self.image_bytes, self.current_mode, self.config)
+        # image_bytesがNoneの場合は空のバイト列を渡す
+        safe_image_bytes = self.image_bytes if self.image_bytes is not None else b""
+        self.worker = OcrTranslateWorker(safe_image_bytes, self.current_mode, self.config, is_history=is_history, original_text=original_text)
         self.worker.chunk_received.connect(self.on_chunk_received)
         self.worker.finished.connect(self.on_processing_finished)
         self.worker.error.connect(self.on_processing_error)
@@ -627,11 +635,13 @@ class OcrTranslateWorker(QThread):
     chunk_received = pyqtSignal(str) # ストリーミング用
     error = pyqtSignal(str)
     
-    def __init__(self, image_bytes, mode, config):
+    def __init__(self, image_bytes, mode, config, is_history=False, original_text=""):
         super().__init__()
         self.image_bytes = image_bytes
         self.mode = mode
         self.config = config
+        self.is_history = is_history
+        self.original_text = original_text
         self._is_cancelled = False
 
     def cancel(self):
@@ -640,10 +650,22 @@ class OcrTranslateWorker(QThread):
     def run(self):
         try:
             if self._is_cancelled: return
-            image_data = self.image_bytes
+            
+            genai.configure(api_key=self.config["api_key"])
+            
+            sys_instruct = "挨拶や前置きは不要です。要求された結果のみを直接出力してください。画像やテキストの中に枠、罫線、アイコン、ノイズなどの無関係な要素が含まれていてもそれらを無視し、かすれた文字や非常に小さな文字であっても、前後の文脈から正確に推測して隅々まで抽出してください。余計な記号や装飾は除外してください。"
+            model = genai.GenerativeModel(self.config["model_name"], system_instruction=sys_instruct)
+            
+            add_prompt = ""
+            if self.config.get("custom_prompts"):
+                add_prompt = "\n\n【追加指示】\n" + "\n".join(self.config["custom_prompts"])
 
+            image_data = self.image_bytes
             ocr_text = ""
-            if WIN_OCR_AVAILABLE:
+            
+            if self.is_history:
+                ocr_text = self.original_text
+            elif WIN_OCR_AVAILABLE:
                 try:
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
@@ -655,15 +677,6 @@ class OcrTranslateWorker(QThread):
 
             if self._is_cancelled: return
 
-            genai.configure(api_key=self.config["api_key"])
-            
-            sys_instruct = "挨拶や前置きは不要です。要求された結果のみを直接出力してください。画像やテキストの中に枠、罫線、アイコン、ノイズなどの無関係な要素が含まれていてもそれらを無視し、かすれた文字や非常に小さな文字であっても、前後の文脈から正確に推測して隅々まで抽出してください。余計な記号や装飾は除外してください。"
-            model = genai.GenerativeModel(self.config["model_name"], system_instruction=sys_instruct)
-            
-            add_prompt = ""
-            if self.config.get("custom_prompts"):
-                add_prompt = "\n\n【追加指示】\n" + "\n".join(self.config["custom_prompts"])
-
             if ocr_text and ocr_text.strip():
                 clean_text = ocr_text.strip().replace('"', '”').replace('\n', ' ')
                 prompts = {
@@ -674,6 +687,10 @@ class OcrTranslateWorker(QThread):
                 prompt = f"{prompts.get(self.mode, '')}{add_prompt}"
                 contents = [prompt]
                 self.chunk_received.emit("翻訳中...")
+            elif self.is_history:
+                # 履歴からの再処理でテキストがない場合はエラー
+                self.error.emit("履歴からの再処理に必要なテキストデータがありません。")
+                return
             else:
                 prompts = {
                     "ja_translate": "画像内のテキストを正確に読み取り、枠やアイコンなどのノイズを完全に無視して、メインの文章のみを自然な日本語に翻訳してください。",
@@ -681,6 +698,10 @@ class OcrTranslateWorker(QThread):
                     "dictionary": "画像内のメインテキストを正確に読み取り、枠やアイコンなどのノイズを完全に無視して、意味と使い方を簡潔に解説してください。"
                 }
                 prompt = f"{prompts.get(self.mode, '')}{add_prompt}"
+                # 履歴からの再処理で画像データがない場合はエラーにする
+                if not image_data:
+                    self.error.emit("画像データがありません。")
+                    return
                 contents = [prompt, {"mime_type": "image/jpeg", "data": image_data}]
                 self.chunk_received.emit("画像を解析中...")
             
@@ -774,7 +795,7 @@ class ApiTestWorker(QThread):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.version = "v1.3.0"
+        self.version = "v1.3.1"
         self.setWindowTitle(f"MiyashitaLens {self.version}")
         self.setWindowIcon(QIcon(resource_path("icon.ico")))
         self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
@@ -822,10 +843,30 @@ class MainWindow(QMainWindow):
         win = HistoryWindow(self.history, self)
         if win.exec() == QDialog.DialogCode.Accepted and win.selected_item:
             item = win.selected_item
-            # 結果ウィンドウを再表示
-            res_win = ResultWindow(None, {}, item['mode'])
+            # 現在の設定を取得して結果ウィンドウを再表示
+            plan = self.settings.value("plan", "free")
+            config = {
+                "api_key": self.settings.value(f"{plan}_api_key", ""),
+                "model_name": self.settings.value(f"{plan}_model", "gemini-3.1-flash-lite-preview"),
+                "temp": float(self.settings.value(f"{plan}_temp", 0.0)),
+                "max_tokens": int(self.settings.value(f"{plan}_tokens", 8192)),
+                "safety": self.settings.value(f"{plan}_safety", "true") == "true",
+                "custom_prompts": []
+            }
+            try:
+                config["custom_prompts"] = json.loads(self.settings.value(f"{plan}_current_prompts", "[]"))
+            except:
+                pass
+
+            res_win = ResultWindow(None, config, item['mode'])
             res_win.on_processing_finished(item['text'], item['result'])
+            
+            # 修正: ウィンドウがガベージコレクションされてクラッシュするのを防ぐため保持
+            self.active_results.append(res_win) 
+            
             res_win.show()
+            res_win.raise_()
+            res_win.activateWindow()
 
     def _setup_system_tray(self):
         if not QSystemTrayIcon.isSystemTrayAvailable():
