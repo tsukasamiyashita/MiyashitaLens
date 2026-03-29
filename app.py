@@ -90,18 +90,53 @@ class HistoryWindow(QDialog):
     """ 履歴表示ウィンドウ """
     def __init__(self, history, parent=None):
         super().__init__(parent)
+        self.history = history
         self.setWindowTitle("履歴 (最新30件)")
-        self.resize(500, 400)
+        self.resize(600, 500)
+        self.setStyleSheet("""
+            QDialog { background-color: #ffffff; }
+            QListWidget { border: 1px solid #e0e0e0; border-radius: 8px; padding: 5px; font-size: 14px; }
+            QListWidget::item { padding: 10px; border-bottom: 1px solid #f0f0f0; }
+            QListWidget::item:selected { background-color: #e8f0fe; color: #1a73e8; border-radius: 4px; font-weight: bold; }
+            QPushButton { background-color: #1a73e8; color: white; border: none; border-radius: 6px; padding: 10px; font-weight: bold; }
+            QPushButton:hover { background-color: #1557b0; }
+            QPushButton#ClearBtn { background-color: #d93025; }
+            QPushButton#ClearBtn:hover { background-color: #c5221f; }
+        """)
         layout = QVBoxLayout(self)
         self.list_widget = QListWidget()
-        for item in history:
-            self.list_widget.addItem(f"{item['time']} - {item['text'][:30]}...")
+        self.refresh_list()
         layout.addWidget(self.list_widget)
+
+        btn_layout = QHBoxLayout()
         btn_open = QPushButton("選択した履歴を開く")
         btn_open.clicked.connect(self.open_selected)
-        layout.addWidget(btn_open)
-        self.history = history
+        btn_pin = QPushButton("固定/解除")
+        btn_pin.clicked.connect(self.toggle_pin)
+        btn_clear = QPushButton("固定以外をクリア", objectName="ClearBtn")
+        btn_clear.clicked.connect(self.clear_history)
+        btn_layout.addWidget(btn_open)
+        btn_layout.addWidget(btn_pin)
+        btn_layout.addWidget(btn_clear)
+        layout.addLayout(btn_layout)
         self.selected_item = None
+
+    def refresh_list(self):
+        self.list_widget.clear()
+        for item in self.history:
+            pin_mark = "📌 " if item.get("pinned", False) else ""
+            display_text = f"{pin_mark}{item['time']} | {item['text'][:40]}..."
+            self.list_widget.addItem(display_text)
+
+    def toggle_pin(self):
+        idx = self.list_widget.currentRow()
+        if idx >= 0:
+            self.history[idx]["pinned"] = not self.history[idx].get("pinned", False)
+            self.refresh_list()
+
+    def clear_history(self):
+        self.history = [item for item in self.history if item.get("pinned", False)]
+        self.refresh_list()
 
     def open_selected(self):
         idx = self.list_widget.currentRow()
@@ -739,7 +774,7 @@ class ApiTestWorker(QThread):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.version = "v1.2.0"
+        self.version = "v1.3.0"
         self.setWindowTitle(f"MiyashitaLens {self.version}")
         self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
         self.resize(280, 350)
@@ -980,8 +1015,12 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(3000, lambda: self.status_label.setStyleSheet("color: #666;"))
 
     def closeEvent(self, event):
-        QApplication.quit()
-        super().closeEvent(event)
+        if self.tray_icon and self.tray_icon.isVisible():
+            self.hide()
+            event.ignore()
+        else:
+            QApplication.quit()
+            super().closeEvent(event)
 
 class SnippingWidget(QMainWindow):
     def __init__(self, main_win, restore_main=True):

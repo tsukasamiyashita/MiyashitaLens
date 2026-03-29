@@ -32,7 +32,7 @@ jobs:
         --onefile 
         --noconsole 
         --clean 
-        --name "MiyashitaLens-v1.2.0" 
+        --name "MiyashitaLens-v1.3.0" 
         --add-data "README.md;."
         app.py
 
@@ -40,5 +40,5 @@ jobs:
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: MiyashitaLens-v1.2.0
-        path: dist/MiyashitaLens-v1.2.0.exe
+        name: MiyashitaLens-v1.3.0
+        path: dist/MiyashitaLens-v1.3.0.exe
