@@ -831,7 +831,11 @@ class MainWindow(QMainWindow):
         if not QSystemTrayIcon.isSystemTrayAvailable():
             return
         self.tray_icon = QSystemTrayIcon(self)
-        self.tray_icon.setIcon(QIcon(resource_path("icon.ico")))
+        icon_path = resource_path("icon.ico")
+        if os.path.exists(icon_path):
+            self.tray_icon.setIcon(QIcon(icon_path))
+        else:
+            self.tray_icon.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon))
         self.tray_icon.setToolTip(f"MiyashitaLens {self.version}")
         menu = QMenu()
         menu.addAction("ウィンドウを表示", self._restore_from_tray)
