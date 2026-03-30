@@ -91,7 +91,7 @@ class HistoryWindow(QDialog):
     def __init__(self, history, parent=None):
         super().__init__(parent)
         self.history = history
-        self.setWindowTitle("履歴 (最新30件)")
+        self.setWindowTitle("履歴 (最新100件)")
         self.resize(600, 500)
         self.setStyleSheet("""
             QDialog { background-color: #ffffff; }
@@ -514,7 +514,7 @@ class ResultWindow(QWidget):
     """ 結果表示ウィンドウ """
     def __init__(self, image_bytes, config, current_mode, worker=None):
         super().__init__()
-        self.setWindowTitle("MiyashitaLens v1.2.0 - 結果")
+        self.setWindowTitle("MiyashitaLens v1.4.0 - 結果")
         self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
         self.resize(500, 550)
         self.image_bytes = image_bytes
@@ -589,6 +589,12 @@ class ResultWindow(QWidget):
         self.processed_edit.setPlainText(processed_text)
         self.cancel_btn.setEnabled(False)
         self.cancel_btn.hide()
+        
+        # メインウィンドウの履歴に追加
+        for widget in QApplication.topLevelWidgets():
+            if isinstance(widget, MainWindow):
+                widget.add_to_history(original_text, processed_text)
+                break
 
     def on_processing_error(self, error_msg):
         self.original_edit.setPlainText("エラー")
@@ -606,10 +612,8 @@ class ResultWindow(QWidget):
         self.current_mode = new_mode
         self.update_mode_ui()
         
-        # 履歴から開いた場合（image_bytesがNone）は現在のテキストを保持
-        is_history = (self.image_bytes is None)
-        # setPlainTextする前に現在のテキストを取得
-        original_text = self.original_edit.toPlainText() if is_history else ""
+        # 現在のテキストを取得（ユーザーが編集している可能性があるため）
+        original_text = self.original_edit.toPlainText()
         
         self.original_edit.setPlainText("解析中...")
         self.processed_edit.setPlainText("待機中...")
@@ -617,9 +621,8 @@ class ResultWindow(QWidget):
         self.cancel_btn.setEnabled(True)
         self.cancel_btn.show()
 
-        # image_bytesがNoneの場合は空のバイト列を渡す
-        safe_image_bytes = self.image_bytes if self.image_bytes is not None else b""
-        self.worker = OcrTranslateWorker(safe_image_bytes, self.current_mode, self.config, is_history=is_history, original_text=original_text)
+        # 編集されたテキストを優先して処理する
+        self.worker = OcrTranslateWorker(b"", self.current_mode, self.config, is_history=True, original_text=original_text)
         self.worker.chunk_received.connect(self.on_chunk_received)
         self.worker.finished.connect(self.on_processing_finished)
         self.worker.error.connect(self.on_processing_error)
@@ -795,7 +798,7 @@ class ApiTestWorker(QThread):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.version = "v1.3.1"
+        self.version = "v1.4.0"
         self.setWindowTitle(f"MiyashitaLens {self.version}")
         self.setWindowIcon(QIcon(resource_path("icon.ico")))
         self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
@@ -836,7 +839,7 @@ class MainWindow(QMainWindow):
             "mode": self.current_mode
         }
         self.history.insert(0, item)
-        self.history = self.history[:30]
+        self.history = self.history[:100]
         self._save_history()
 
     def show_history(self):
