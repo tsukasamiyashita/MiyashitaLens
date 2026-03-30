@@ -123,10 +123,23 @@ class HistoryWindow(QDialog):
 
     def refresh_list(self):
         self.list_widget.clear()
-        for item in self.history:
-            pin_mark = "📌 " if item.get("pinned", False) else ""
-            display_text = f"{pin_mark}{item['time']} | {item['text'][:40]}..."
-            self.list_widget.addItem(display_text)
+        for i, item in enumerate(self.history):
+            # 番号付きで、より見やすいレイアウト
+            pin_mark = "📌 " if item.get("pinned", False) else "   "
+            display_text = f"{pin_mark} [No.{i+1:03d}] {item['time']}\n    {item['text'][:50]}"
+            
+            list_item = QListWidgetItem(display_text)
+            # アイテムの高さを調整
+            size = list_item.sizeHint()
+            size.setHeight(size.height() + 15)
+            list_item.setSizeHint(size)
+            
+            self.list_widget.addItem(list_item)
+        
+        # フォント設定
+        font = self.list_widget.font()
+        font.setPointSize(10)
+        self.list_widget.setFont(font)
 
     def toggle_pin(self):
         idx = self.list_widget.currentRow()
@@ -136,6 +149,12 @@ class HistoryWindow(QDialog):
 
     def clear_history(self):
         self.history = [item for item in self.history if item.get("pinned", False)]
+        # メインウィンドウの履歴も更新
+        for widget in QApplication.topLevelWidgets():
+            if isinstance(widget, MainWindow):
+                widget.history = self.history
+                widget._save_history()
+                break
         self.refresh_list()
 
     def open_selected(self):
@@ -603,14 +622,15 @@ class ResultWindow(QWidget):
         self.cancel_btn.hide()
 
     def reprocess(self, new_mode):
-        if self.current_mode == new_mode and self.worker and self.worker.isRunning():
-            return
-        
         if self.worker and self.worker.isRunning():
-            self.worker.cancel()
+            return
 
         self.current_mode = new_mode
         self.update_mode_ui()
+        
+        # モード切替ボタンを一時的に無効化
+        for btn in self.mode_buttons.values():
+            btn.setEnabled(False)
         
         # 現在のテキストを取得（ユーザーが編集している可能性があるため）
         original_text = self.original_edit.toPlainText()
@@ -626,7 +646,16 @@ class ResultWindow(QWidget):
         self.worker.chunk_received.connect(self.on_chunk_received)
         self.worker.finished.connect(self.on_processing_finished)
         self.worker.error.connect(self.on_processing_error)
+        
+        # 終了時にボタンを再有効化
+        self.worker.finished.connect(self.enable_mode_buttons)
+        self.worker.error.connect(self.enable_mode_buttons)
+        
         self.worker.start()
+
+    def enable_mode_buttons(self, *args):
+        for btn in self.mode_buttons.values():
+            btn.setEnabled(True)
 
     def closeEvent(self, event):
         if self.worker and self.worker.isRunning():
@@ -832,6 +861,10 @@ class MainWindow(QMainWindow):
         self.settings.setValue("history", json.dumps(self.history))
 
     def add_to_history(self, original_text, processed_text):
+        # 直近の履歴と同じテキストであれば追加しない
+        if self.history and self.history[0]["text"] == original_text:
+            return
+
         item = {
             "time": time.strftime("%Y-%m-%d %H:%M:%S"),
             "text": original_text,
