@@ -52,11 +52,30 @@ async def perform_local_ocr(image_bytes):
             
         result = await _ocr_engine.recognize_async(bitmap)
         
-        # WindowsのOCRは日本語の1文字ごとにスペースを入れてしまうことがあるため、
-        # 日本語（漢字・ひらがな・カタカナ・全角文字等）の間にある空白を削除して整形する
+        # WindowsのOCRは文字や単語の間に不要なスペースを入れてしまうことがあるため整形する
         text = result.text
         if text:
-            text = re.sub(r'(?<=[\u3000-\u9FFF\uFF00-\uFFEF])\s+(?=[\u3000-\u9FFF\uFF00-\uFFEF])', '', text)
+            # 連続する空白（全角含む）を1つの半角スペースに統一
+            text = re.sub(r'[ \t\u3000]+', ' ', text)
+            
+            # 日本語文字（漢字、ひらがな、カタカナ、全角文字・記号など）
+            jp = r'[\u3000-\u303F\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF\uFF00-\uFFEF]'
+            
+            # 日本語同士の間のスペースを削除
+            text = re.sub(rf'(?<={jp}) +(?={jp})', '', text)
+            # 日本語と半角英数字・記号の間のスペースを削除
+            text = re.sub(rf'(?<={jp}) +(?=[!-~])', '', text)
+            # 半角英数字・記号と日本語の間のスペースを削除
+            text = re.sub(rf'(?<=[!-~]) +(?={jp})', '', text)
+            
+            # ファイル名やバージョン番号（例: build. yml, v1. 5. 0）の誤認識を防ぐため、
+            # 「英数字 + ピリオド」と「英小文字または数字」の間にあるスペースを削除
+            text = re.sub(r'(?<=[a-zA-Z0-9]\.)\s+(?=[a-z0-9])', '', text)
+            
+            # 英数字に挟まれた中黒(・)をピリオド(.)に置換 (OCR誤認識対策)
+            text = re.sub(r'(?<=[a-zA-Z0-9])[・･](?=[a-zA-Z0-9])', '.', text)
+            
+            text = text.strip()
             
         return text
     except Exception as e:
@@ -1220,8 +1239,8 @@ class SnippingWidget(QMainWindow):
         if r.width() > 10 and r.height() > 10:
             pixmap = self.original_pixmap.copy(r)
             
-            # 常に3倍に拡大し、高品質な補間で文字のピクセルを増やす
-            scale_factor = 3
+            # 常に4倍に拡大し、高品質な補間で文字のピクセルを増やす
+            scale_factor = 4
             pixmap = pixmap.scaled(pixmap.width() * scale_factor, pixmap.height() * scale_factor, 
                                    Qt.AspectRatioMode.KeepAspectRatio, 
                                    Qt.TransformationMode.SmoothTransformation)
