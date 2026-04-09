@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                              QDoubleSpinBox, QListWidget, QListWidgetItem, QAbstractItemView,
                              QButtonGroup, QFrame, QSystemTrayIcon, QStyle)
 from PyQt6.QtCore import Qt, QRect, QPoint, QTimer, QThread, pyqtSignal, QBuffer, QIODevice, QSettings, QUrl, QEvent
-from PyQt6.QtGui import QPainter, QColor, QPen, QGuiApplication, QScreen, QPixmap, QIcon, QAction, QDesktopServices
+from PyQt6.QtGui import QPainter, QColor, QPen, QGuiApplication, QScreen, QPixmap, QIcon, QAction, QDesktopServices, QActionGroup
 
 import google.generativeai as genai
 
@@ -51,7 +51,14 @@ async def perform_local_ocr(image_bytes):
             return ""
             
         result = await _ocr_engine.recognize_async(bitmap)
-        return result.text
+        
+        # WindowsのOCRは日本語の1文字ごとにスペースを入れてしまうことがあるため、
+        # 日本語（漢字・ひらがな・カタカナ・全角文字等）の間にある空白を削除して整形する
+        text = result.text
+        if text:
+            text = re.sub(r'(?<=[\u3000-\u9FFF\uFF00-\uFFEF])\s+(?=[\u3000-\u9FFF\uFF00-\uFFEF])', '', text)
+            
+        return text
     except Exception as e:
         print(f"Local OCR Error: {e}")
         return ""
@@ -531,9 +538,13 @@ class SettingsWindow(QDialog):
 
 class ResultWindow(QWidget):
     """ 結果表示ウィンドウ """
+    
+    # メインウィンドウにモードの変更を通知するためのシグナルを追加
+    mode_changed = pyqtSignal(str)
+    
     def __init__(self, image_bytes, config, current_mode, worker=None):
         super().__init__()
-        self.setWindowTitle("MiyashitaLens v1.4.0 - 結果")
+        self.setWindowTitle("MiyashitaLens v1.5.0 - 結果")
         self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
         self.resize(500, 550)
         self.image_bytes = image_bytes
@@ -559,7 +570,7 @@ class ResultWindow(QWidget):
         mode_box = QHBoxLayout()
         mode_box.addWidget(QLabel("✨ モード切替:"))
         self.mode_buttons = {}
-        for k, n in [("ja_translate", "日本語翻訳"), ("en_translate", "英語翻訳"), ("dictionary", "辞書")]:
+        for k, n in [("ja_translate", "日本語翻訳"), ("en_translate", "英語翻訳"), ("dictionary", "辞書"), ("copy", "コピー")]:
             btn = QPushButton(n)
             btn.setProperty("class", "ModeBtn")
             btn.clicked.connect(lambda checked, mode=k: self.reprocess(mode))
@@ -609,6 +620,11 @@ class ResultWindow(QWidget):
         self.cancel_btn.setEnabled(False)
         self.cancel_btn.hide()
         
+        # コピーモードの場合は取得結果をクリップボードにコピー
+        if self.current_mode == "copy":
+            QApplication.clipboard().setText(processed_text)
+            self.processed_edit.setPlainText(processed_text + "\n\n✅ クリップボードにコピーしました！")
+        
         # メインウィンドウの履歴に追加
         for widget in QApplication.topLevelWidgets():
             if isinstance(widget, MainWindow):
@@ -627,6 +643,9 @@ class ResultWindow(QWidget):
 
         self.current_mode = new_mode
         self.update_mode_ui()
+        
+        # モードが変更されたことをメインウィンドウに通知する
+        self.mode_changed.emit(new_mode)
         
         # モード切替ボタンを一時的に無効化
         for btn in self.mode_buttons.values():
@@ -710,6 +729,13 @@ class OcrTranslateWorker(QThread):
             if self._is_cancelled: return
 
             if ocr_text and ocr_text.strip():
+                # コピーモードでローカルOCRが成功している場合、AIに渡さずに即座にテキストを返す
+                if self.mode == "copy":
+                    self.chunk_received.emit("テキストを抽出しました。")
+                    if not self._is_cancelled:
+                        self.finished.emit(ocr_text.strip(), ocr_text.strip())
+                    return
+
                 clean_text = ocr_text.strip().replace('"', '”').replace('\n', ' ')
                 prompts = {
                     "ja_translate": f"以下のテキストからノイズ（枠線、アイコン由来のゴミ、無関係な記号など）を無視し、メインとなる文章のみを抽出した上で、自然な日本語に翻訳してください。\n\n{clean_text}",
@@ -727,7 +753,8 @@ class OcrTranslateWorker(QThread):
                 prompts = {
                     "ja_translate": "画像内のテキストを正確に読み取り、枠やアイコンなどのノイズを完全に無視して、メインの文章のみを自然な日本語に翻訳してください。",
                     "en_translate": "画像内のテキストを正確に読み取り、枠やアイコンなどのノイズを完全に無視して、メインの文章のみを自然な英語に翻訳してください。",
-                    "dictionary": "画像内のメインテキストを正確に読み取り、枠やアイコンなどのノイズを完全に無視して、意味と使い方を簡潔に解説してください。"
+                    "dictionary": "画像内のメインテキストを正確に読み取り、枠やアイコンなどのノイズを完全に無視して、意味と使い方を簡潔に解説してください。",
+                    "copy": "画像内のテキストを正確に読み取り、枠やアイコンなどのノイズを完全に無視して、テキストのみをそのまま出力してください。その他の文章や説明は一切不要です。"
                 }
                 prompt = f"{prompts.get(self.mode, '')}{add_prompt}"
                 # 履歴からの再処理で画像データがない場合はエラーにする
@@ -827,15 +854,15 @@ class ApiTestWorker(QThread):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.version = "v1.4.0"
+        self.version = "v1.5.0"
         self.setWindowTitle(f"MiyashitaLens {self.version}")
         self.setWindowIcon(QIcon(resource_path("icon.ico")))
         self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
-        self.resize(280, 350)
+        self.resize(300, 350)
         self.setStyleSheet("""
             QMainWindow, QWidget { background-color: #ffffff; color: #333333; font-family: 'Segoe UI', Meiryo, sans-serif; }
             QPushButton#SnipBtn { background-color: #1a73e8; color: white; border-radius: 6px; padding: 8px; font-weight: bold; }
-            QPushButton.ModeBtn { background-color: #f8f9fa; border: 1px solid #ddd; padding: 10px; border-radius: 4px; font-size: 11px; }
+            QPushButton.ModeBtn { background-color: #f8f9fa; border: 1px solid #ddd; padding: 6px; border-radius: 4px; font-size: 11px; }
             QPushButton.ModeBtn[selected="true"] { background-color: #e8f0fe; border: 2px solid #1a73e8; color: #1a73e8; }
             QPushButton#ActionBtn { background-color: #f1f3f4; border: 1px solid #ccc; padding: 8px 10px; border-radius: 4px; font-weight: bold; color: #3c4043; }
             QPushButton#ActionBtn:hover { background-color: #e8eaed; }
@@ -895,6 +922,10 @@ class MainWindow(QMainWindow):
                 pass
 
             res_win = ResultWindow(None, config, item['mode'])
+            
+            # 履歴表示からの結果ウィンドウでもモード変更を監視する
+            res_win.mode_changed.connect(self.set_mode)
+            
             res_win.on_processing_finished(item['text'], item['result'])
             
             # 修正: ウィンドウがガベージコレクションされてクラッシュするのを防ぐため保持
@@ -918,10 +949,32 @@ class MainWindow(QMainWindow):
         menu.addAction("ウィンドウを表示", self._restore_from_tray)
         menu.addAction("履歴を表示", self.show_history)
         menu.addSeparator()
+        
+        # トレイメニューに「モード選択」を追加
+        mode_menu = menu.addMenu("モード選択")
+        self.mode_action_group = QActionGroup(self)
+        self.tray_mode_actions = {}
+        for k, n in [("ja_translate", "日本語翻訳"), ("en_translate", "英語翻訳"), ("dictionary", "辞書"), ("copy", "コピー")]:
+            action = QAction(n, self, checkable=True)
+            if k == getattr(self, 'current_mode', ''):
+                action.setChecked(True)
+            action.setData(k)
+            action.triggered.connect(self._on_tray_mode_changed)
+            self.mode_action_group.addAction(action)
+            mode_menu.addAction(action)
+            self.tray_mode_actions[k] = action
+
+        menu.addSeparator()
         menu.addAction("終了", QApplication.instance().quit)
         self.tray_icon.setContextMenu(menu)
         self.tray_icon.activated.connect(self._on_tray_activated)
         self.tray_icon.show()
+
+    def _on_tray_mode_changed(self):
+        action = self.sender()
+        if action:
+            mode = action.data()
+            self.set_mode(mode)
 
     def _on_tray_activated(self, reason):
         if reason == QSystemTrayIcon.ActivationReason.Trigger:
@@ -959,7 +1012,8 @@ class MainWindow(QMainWindow):
         mode_layout = QHBoxLayout()
         mode_layout.setSpacing(2)
         self.mode_btns = {}
-        for k, n in [("ja_translate", "日本語翻訳"), ("en_translate", "英語翻訳"), ("dictionary", "辞書")]:
+        # コピーモードを追加
+        for k, n in [("ja_translate", "日本語翻訳"), ("en_translate", "英語翻訳"), ("dictionary", "辞書"), ("copy", "コピー")]:
             btn = QPushButton(n); btn.setProperty("class", "ModeBtn"); btn.clicked.connect(lambda _, m=k: self.set_mode(m))
             self.mode_btns[k] = btn; mode_layout.addWidget(btn)
         layout.addLayout(mode_layout)
@@ -1016,6 +1070,10 @@ class MainWindow(QMainWindow):
         for k, b in self.mode_btns.items():
             b.setProperty("selected", str(k == mode).lower())
             b.style().unpolish(b); b.style().polish(b)
+            
+        # トレイメニューのアクション状態を同期
+        if hasattr(self, 'tray_mode_actions') and mode in self.tray_mode_actions:
+            self.tray_mode_actions[mode].setChecked(True)
 
     def open_settings(self):
         settings_win = SettingsWindow(self.settings, self)
@@ -1067,6 +1125,10 @@ class MainWindow(QMainWindow):
         self.worker = OcrTranslateWorker(img_data, mode, config)
         
         res_win = ResultWindow(img_data, config, mode, self.worker)
+        
+        # 結果ウィンドウでモードが変更されたら、メインウィンドウのset_modeを呼び出す
+        res_win.mode_changed.connect(self.set_mode)
+        
         self.active_results.append(res_win) 
         res_win.show()
         res_win.raise_()
