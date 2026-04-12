@@ -32,7 +32,7 @@ jobs:
         --onefile 
         --noconsole 
         --clean 
-        --name "MiyashitaLens-v1.5.0" 
+        --name "MiyashitaLens-v1.5.1" 
         --icon="icon.ico"
         --add-data "readme.md;."
         --add-data "icon.ico;."
@@ -42,5 +42,5 @@ jobs:
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: MiyashitaLens-v1.5.0
-        path: dist/MiyashitaLens-v1.5.0.exe
+        name: MiyashitaLens-v1.5.1
+        path: dist/MiyashitaLens-v1.5.1.exe

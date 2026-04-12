@@ -563,7 +563,7 @@ class ResultWindow(QWidget):
     
     def __init__(self, image_bytes, config, current_mode, worker=None):
         super().__init__()
-        self.setWindowTitle("MiyashitaLens v1.5.0 - 結果")
+        self.setWindowTitle("MiyashitaLens v1.5.1 - 結果")
         self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
         self.resize(500, 550)
         self.image_bytes = image_bytes
@@ -875,7 +875,7 @@ class ApiTestWorker(QThread):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.version = "v1.5.0"
+        self.version = "v1.5.1"
         self.setWindowTitle(f"MiyashitaLens {self.version}")
         self.setWindowIcon(QIcon(resource_path("icon.ico")))
         self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
