@@ -623,9 +623,11 @@ class ResultWindow(QWidget):
     def cancel_processing(self):
         if self.worker and self.worker.isRunning():
             self.worker.cancel()
-            self.original_edit.setPlainText("キャンセル済")
+            # 読み取ったテキストを上書きしないようコメントアウト または 削除します
+            # self.original_edit.setPlainText("キャンセル済")
             self.processed_edit.setPlainText("処理がキャンセルされました。")
             self.cancel_btn.setEnabled(False)
+            self.enable_mode_buttons()
 
     def on_chunk_received(self, text):
         """ ストリーミングからの断片データを受け取りUIに逐次反映する """
@@ -673,7 +675,7 @@ class ResultWindow(QWidget):
         # 現在のテキストを取得（ユーザーが編集している可能性があるため）
         original_text = self.original_edit.toPlainText()
         
-        self.original_edit.setPlainText("解析中...")
+        # 読み取ったテキストを維持するため「解析中...」に変更しない
         self.processed_edit.setPlainText("待機中...")
         
         self.cancel_btn.setEnabled(True)
